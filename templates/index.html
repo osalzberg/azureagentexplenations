@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure Log Analytics Query Explorer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <i class="fab fa-microsoft"></i>
+                <h2>KQL Explorer</h2>
+            </div>
+            
+            <div class="connection-panel">
+                <h3><i class="fas fa-plug"></i> Connection</h3>
+                <div class="form-group">
+                    <label for="workspace-id">Workspace ID</label>
+                    <input type="text" id="workspace-id" placeholder="Enter Log Analytics Workspace ID" value="{{ default_workspace_id }}">
+                </div>
+                <div class="form-group">
+                    <label for="timespan">Timespan (hours)</label>
+                    <select id="timespan">
+                        <option value="1">Last 1 hour</option>
+                        <option value="4">Last 4 hours</option>
+                        <option value="12">Last 12 hours</option>
+                        <option value="24" selected>Last 24 hours</option>
+                        <option value="72">Last 3 days</option>
+                        <option value="168">Last 7 days</option>
+                        <option value="720">Last 30 days</option>
+                    </select>
+                </div>
+                <button id="test-connection" class="btn btn-secondary">
+                    <i class="fas fa-bolt"></i> Test Connection
+                </button>
+                <div id="connection-status" class="connection-status"></div>
+            </div>
+
+            <div class="examples-panel">
+                <h3><i class="fas fa-code"></i> Example Queries</h3>
+                <div id="examples-list" class="examples-list">
+                    <!-- Populated by JavaScript -->
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="header">
+                <h1><i class="fas fa-database"></i> Azure Log Analytics</h1>
+                <p>Execute KQL queries against your Log Analytics workspace</p>
+            </header>
+
+            <div class="query-section">
+                <div class="query-header">
+                    <h3><i class="fas fa-terminal"></i> Query Editor</h3>
+                    <div class="query-actions">
+                        <button id="format-query" class="btn btn-icon" title="Format Query">
+                            <i class="fas fa-align-left"></i>
+                        </button>
+                        <button id="clear-query" class="btn btn-icon" title="Clear Query">
+                            <i class="fas fa-eraser"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="query-editor-container">
+                    <textarea id="kql-query" placeholder="Enter your KQL query here...
+
+Example:
+Heartbeat
+| where TimeGenerated > ago(1h)
+| summarize count() by Computer
+| order by count_ desc"></textarea>
+                    <div class="line-numbers" id="line-numbers"></div>
+                </div>
+                <div class="query-footer">
+                    <button id="run-query" class="btn btn-primary">
+                        <i class="fas fa-play"></i> Run Query
+                    </button>
+                    <span class="keyboard-hint">Ctrl+Enter to run</span>
+                </div>
+            </div>
+
+            <div class="results-section">
+                <div class="results-header">
+                    <h3><i class="fas fa-table"></i> Results</h3>
+                    <div class="results-info">
+                        <span id="results-count"></span>
+                        <span id="query-time"></span>
+                    </div>
+                    <div class="results-actions">
+                        <button id="export-csv" class="btn btn-icon" title="Export to CSV" disabled>
+                            <i class="fas fa-file-csv"></i>
+                        </button>
+                        <button id="export-json" class="btn btn-icon" title="Export to JSON" disabled>
+                            <i class="fas fa-file-code"></i>
+                        </button>
+                    </div>
+                </div>
+                <div id="results-container" class="results-container">
+                    <div class="placeholder">
+                        <i class="fas fa-search"></i>
+                        <p>Run a query to see results</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay hidden">
+        <div class="loader">
+            <div class="spinner"></div>
+            <p>Executing query...</p>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast hidden">
+        <i class="toast-icon"></i>
+        <span class="toast-message"></span>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
