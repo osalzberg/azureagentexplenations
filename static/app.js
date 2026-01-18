@@ -4,6 +4,7 @@
 
 // State
 let currentResults = null;
+let currentQuery = null;
 
 // DOM Elements
 const workspaceIdInput = document.getElementById('workspace-id');
@@ -23,6 +24,9 @@ const loadingOverlay = document.getElementById('loading-overlay');
 const toast = document.getElementById('toast');
 const examplesList = document.getElementById('examples-list');
 const lineNumbers = document.getElementById('line-numbers');
+const explanationSection = document.getElementById('explanation-section');
+const explanationContainer = document.getElementById('explanation-container');
+const refreshExplanationBtn = document.getElementById('refresh-explanation');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -36,6 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
     clearQueryBtn.addEventListener('click', clearQuery);
     exportCsvBtn.addEventListener('click', exportToCsv);
     exportJsonBtn.addEventListener('click', exportToJson);
+    refreshExplanationBtn.addEventListener('click', () => generateExplanation(currentQuery, currentResults));
     
     // Keyboard shortcut for running query
     kqlQueryTextarea.addEventListener('keydown', (e) => {
@@ -136,14 +141,19 @@ async function executeQuery() {
             showError(data.error);
             queryTime.textContent = '';
             resultsCount.textContent = '';
+            explanationSection.style.display = 'none';
         } else {
             currentResults = data;
+            currentQuery = query;
             displayResults(data);
             queryTime.textContent = `${elapsed}s`;
             resultsCount.textContent = `${data.total_rows} rows`;
             exportCsvBtn.disabled = false;
             exportJsonBtn.disabled = false;
             showToast(`Query completed: ${data.total_rows} rows returned`, 'success');
+            
+            // Generate AI explanation
+            generateExplanation(query, data);
         }
     } catch (error) {
         showError('Failed to execute query: ' + error.message);
@@ -199,6 +209,51 @@ function displayResults(data) {
     resultsContainer.innerHTML = html;
 }
 
+// Generate AI explanation of results
+async function generateExplanation(query, data) {
+    explanationSection.style.display = 'block';
+    explanationContainer.innerHTML = `
+        <div class="explanation-loading">
+            <i class="fas fa-spinner fa-spin"></i>
+            <span>Analyzing results with AI...</span>
+        </div>
+    `;
+    
+    try {
+        const response = await fetch('/api/explain', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query: query,
+                tables: data.tables,
+                total_rows: data.total_rows
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.error) {
+            explanationContainer.innerHTML = `
+                <div class="explanation-error">
+                    <i class="fas fa-exclamation-circle"></i>
+                    <span>Failed to generate explanation: ${escapeHtml(result.error)}</span>
+                </div>
+            `;
+        } else {
+            // Parse markdown and display
+            const htmlContent = marked.parse(result.explanation);
+            explanationContainer.innerHTML = `<div class="explanation-content">${htmlContent}</div>`;
+        }
+    } catch (error) {
+        explanationContainer.innerHTML = `
+            <div class="explanation-error">
+                <i class="fas fa-exclamation-circle"></i>
+                <span>Failed to generate explanation: ${error.message}</span>
+            </div>
+        `;
+    }
+}
+
 // Show error in results
 function showError(message) {
     resultsContainer.innerHTML = `
@@ -209,8 +264,10 @@ function showError(message) {
         </div>
     `;
     currentResults = null;
+    currentQuery = null;
     exportCsvBtn.disabled = true;
     exportJsonBtn.disabled = true;
+    explanationSection.style.display = 'none';
 }
 
 // Format query (basic formatting)

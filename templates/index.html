@@ -108,6 +108,22 @@ Heartbeat
                     </div>
                 </div>
             </div>
+
+            <!-- AI Explanation Section -->
+            <div class="explanation-section" id="explanation-section" style="display: none;">
+                <div class="explanation-header">
+                    <h3><i class="fas fa-robot"></i> AI Analysis</h3>
+                    <button id="refresh-explanation" class="btn btn-icon" title="Regenerate Explanation">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+                <div id="explanation-container" class="explanation-container">
+                    <div class="explanation-loading">
+                        <i class="fas fa-spinner fa-spin"></i>
+                        <span>Analyzing results...</span>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
@@ -125,6 +141,7 @@ Heartbeat
         <span class="toast-message"></span>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

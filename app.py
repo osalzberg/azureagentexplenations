@@ -6,9 +6,11 @@ Azure Log Analytics workspaces using Azure credentials.
 """
 
 import os
+import json
 from datetime import timedelta
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
+from openai import AzureOpenAI
 from monitor_client import AzureMonitorAgent
 
 # Load environment variables
@@ -19,6 +21,20 @@ app.secret_key = os.urandom(24)
 
 # Default workspace ID (can be overridden in the UI)
 DEFAULT_WORKSPACE_ID = os.getenv("AZURE_LOG_ANALYTICS_WORKSPACE_ID", "")
+
+# Azure OpenAI configuration
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY")
+AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4")
+
+# Initialize Azure OpenAI client
+openai_client = None
+if AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_KEY:
+    openai_client = AzureOpenAI(
+        azure_endpoint=AZURE_OPENAI_ENDPOINT,
+        api_key=AZURE_OPENAI_KEY,
+        api_version="2024-02-15-preview"
+    )
 
 
 @app.route("/")
@@ -129,6 +145,69 @@ def test_connection():
             "success": False,
             "message": f"Connection failed: {str(e)}"
         })
+
+
+@app.route("/api/explain", methods=["POST"])
+def explain_results():
+    """Generate an AI explanation of query results."""
+    try:
+        if not openai_client:
+            return jsonify({"error": "Azure OpenAI not configured"}), 500
+
+        data = request.get_json()
+        query = data.get("query", "")
+        tables = data.get("tables", [])
+        total_rows = data.get("total_rows", 0)
+
+        # Prepare a summary of results for the AI
+        results_summary = []
+        for table in tables:
+            table_info = {
+                "name": table.get("name", "Unknown"),
+                "columns": table.get("columns", []),
+                "row_count": table.get("row_count", 0),
+                "sample_rows": table.get("rows", [])[:5]  # First 5 rows as sample
+            }
+            results_summary.append(table_info)
+
+        prompt = f"""You are an Azure Log Analytics expert. Analyze the following KQL query and its results, then provide a clear, helpful explanation.
+
+## KQL Query:
+```kql
+{query}
+```
+
+## Results Summary:
+- Total rows returned: {total_rows}
+- Tables: {json.dumps(results_summary, indent=2, default=str)}
+
+## Instructions:
+1. **Query Explanation**: Briefly explain what this KQL query does in plain language.
+2. **Results Analysis**: Describe what the results show - patterns, notable values, or insights.
+3. **Table/Column Context**: If you recognize standard Azure tables (like Heartbeat, AzureActivity, requests, exceptions, traces, etc.), explain what these tables typically contain and what the columns mean.
+4. **Insights**: Highlight any interesting findings, potential issues, or recommendations based on the data.
+
+Keep the explanation concise but informative. Use bullet points for clarity. If the results are empty, explain possible reasons why."""
+
+        response = openai_client.chat.completions.create(
+            model=AZURE_OPENAI_DEPLOYMENT,
+            messages=[
+                {"role": "system", "content": "You are an expert in Azure Log Analytics, KQL (Kusto Query Language), and Azure monitoring. Provide clear, actionable explanations."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=1000,
+            temperature=0.7
+        )
+
+        explanation = response.choices[0].message.content
+
+        return jsonify({
+            "success": True,
+            "explanation": explanation
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # KQL example queries for quick access
