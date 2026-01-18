@@ -22,25 +22,72 @@ app.secret_key = os.urandom(24)
 # Default workspace ID (can be overridden in the UI)
 DEFAULT_WORKSPACE_ID = os.getenv("AZURE_LOG_ANALYTICS_WORKSPACE_ID", "")
 
-# Azure OpenAI configuration
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY")
-AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4")
+# Available AI Models configuration
+AI_MODELS = {
+    "gpt-4": {
+        "name": "GPT-4",
+        "deployment": "gpt-4",
+        "endpoint": os.getenv("AZURE_OPENAI_ENDPOINT"),
+        "key": os.getenv("AZURE_OPENAI_KEY")
+    },
+    "gpt-4.1-nano": {
+        "name": "GPT-4.1 Nano",
+        "deployment": "gpt-4.1-nano",
+        "endpoint": os.getenv("AZURE_OPENAI_ENDPOINT_2"),
+        "key": os.getenv("AZURE_OPENAI_KEY_2")
+    },
+    "gpt-5.2-chat": {
+        "name": "GPT-5.2 Chat",
+        "deployment": "gpt-5.2-chat",
+        "endpoint": os.getenv("AZURE_OPENAI_ENDPOINT_2"),
+        "key": os.getenv("AZURE_OPENAI_KEY_2")
+    },
+    "o4-mini": {
+        "name": "O4 Mini",
+        "deployment": "o4-mini",
+        "endpoint": os.getenv("AZURE_OPENAI_ENDPOINT_2"),
+        "key": os.getenv("AZURE_OPENAI_KEY_2")
+    }
+}
 
-# Initialize Azure OpenAI client
-openai_client = None
-if AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_KEY:
-    openai_client = AzureOpenAI(
-        azure_endpoint=AZURE_OPENAI_ENDPOINT,
-        api_key=AZURE_OPENAI_KEY,
-        api_version="2024-02-15-preview"
+DEFAULT_MODEL = "gpt-4"
+
+def get_openai_client(model_id):
+    """Get an OpenAI client for the specified model."""
+    model_config = AI_MODELS.get(model_id)
+    if not model_config:
+        return None, None
+    
+    endpoint = model_config.get("endpoint")
+    key = model_config.get("key")
+    deployment = model_config.get("deployment")
+    
+    if not endpoint or not key:
+        return None, None
+    
+    client = AzureOpenAI(
+        azure_endpoint=endpoint,
+        api_key=key,
+        api_version="2025-01-01-preview"
     )
+    return client, deployment
 
 
 @app.route("/")
 def index():
     """Render the main query interface."""
     return render_template("index.html", default_workspace_id=DEFAULT_WORKSPACE_ID)
+
+
+@app.route("/api/models")
+def get_models():
+    """Return available AI models."""
+    models = [
+        {"id": model_id, "name": config["name"]}
+        for model_id, config in AI_MODELS.items()
+        if config.get("endpoint") and config.get("key")
+    ]
+    return jsonify({"models": models, "default": DEFAULT_MODEL})
 
 
 @app.route("/api/query", methods=["POST"])
@@ -151,13 +198,17 @@ def test_connection():
 def explain_results():
     """Generate an AI explanation of query results."""
     try:
-        if not openai_client:
-            return jsonify({"error": "Azure OpenAI not configured"}), 500
-
         data = request.get_json()
         query = data.get("query", "")
         tables = data.get("tables", [])
         total_rows = data.get("total_rows", 0)
+        model_id = data.get("model", DEFAULT_MODEL)
+
+        # Get the appropriate client for the selected model
+        openai_client, deployment = get_openai_client(model_id)
+        
+        if not openai_client:
+            return jsonify({"error": f"Model '{model_id}' not configured"}), 500
 
         # Prepare a summary of results for the AI
         results_summary = []
@@ -189,21 +240,33 @@ def explain_results():
 
 Keep the explanation concise but informative. Use bullet points for clarity. If the results are empty, explain possible reasons why."""
 
-        response = openai_client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT,
-            messages=[
-                {"role": "system", "content": "You are an expert in Azure Log Analytics, KQL (Kusto Query Language), and Azure monitoring. Provide clear, actionable explanations."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=1000,
-            temperature=0.7
-        )
+        # Use max_completion_tokens for newer models (o4-mini, gpt-5.2, etc.)
+        if model_id in ["o4-mini", "gpt-5.2-chat"]:
+            response = openai_client.chat.completions.create(
+                model=deployment,
+                messages=[
+                    {"role": "system", "content": "You are an expert in Azure Log Analytics, KQL (Kusto Query Language), and Azure monitoring. Provide clear, actionable explanations."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_completion_tokens=1000
+            )
+        else:
+            response = openai_client.chat.completions.create(
+                model=deployment,
+                messages=[
+                    {"role": "system", "content": "You are an expert in Azure Log Analytics, KQL (Kusto Query Language), and Azure monitoring. Provide clear, actionable explanations."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=1000,
+                temperature=0.7
+            )
 
         explanation = response.choices[0].message.content
 
         return jsonify({
             "success": True,
-            "explanation": explanation
+            "explanation": explanation,
+            "model": model_id
         })
 
     except Exception as e:

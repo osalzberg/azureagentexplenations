@@ -5,10 +5,12 @@
 // State
 let currentResults = null;
 let currentQuery = null;
+let selectedModel = 'gpt-4';
 
 // DOM Elements
 const workspaceIdInput = document.getElementById('workspace-id');
 const timespanSelect = document.getElementById('timespan');
+const aiModelSelect = document.getElementById('ai-model');
 const testConnectionBtn = document.getElementById('test-connection');
 const connectionStatus = document.getElementById('connection-status');
 const kqlQueryTextarea = document.getElementById('kql-query');
@@ -30,6 +32,7 @@ const refreshExplanationBtn = document.getElementById('refresh-explanation');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    loadModels();
     loadExamples();
     updateLineNumbers();
     
@@ -41,6 +44,9 @@ document.addEventListener('DOMContentLoaded', () => {
     exportCsvBtn.addEventListener('click', exportToCsv);
     exportJsonBtn.addEventListener('click', exportToJson);
     refreshExplanationBtn.addEventListener('click', () => generateExplanation(currentQuery, currentResults));
+    aiModelSelect.addEventListener('change', (e) => {
+        selectedModel = e.target.value;
+    });
     
     // Keyboard shortcut for running query
     kqlQueryTextarea.addEventListener('keydown', (e) => {
@@ -54,6 +60,23 @@ document.addEventListener('DOMContentLoaded', () => {
     kqlQueryTextarea.addEventListener('input', updateLineNumbers);
     kqlQueryTextarea.addEventListener('scroll', syncLineNumbersScroll);
 });
+
+// Load available AI models
+async function loadModels() {
+    try {
+        const response = await fetch('/api/models');
+        const data = await response.json();
+        
+        aiModelSelect.innerHTML = data.models.map(model => 
+            `<option value="${model.id}" ${model.id === data.default ? 'selected' : ''}>${model.name}</option>`
+        ).join('');
+        
+        selectedModel = data.default;
+    } catch (error) {
+        console.error('Failed to load models:', error);
+        aiModelSelect.innerHTML = '<option value="gpt-4">GPT-4</option>';
+    }
+}
 
 // Update line numbers in editor
 function updateLineNumbers() {
@@ -212,10 +235,11 @@ function displayResults(data) {
 // Generate AI explanation of results
 async function generateExplanation(query, data) {
     explanationSection.style.display = 'block';
+    const modelName = aiModelSelect.options[aiModelSelect.selectedIndex].text;
     explanationContainer.innerHTML = `
         <div class="explanation-loading">
             <i class="fas fa-spinner fa-spin"></i>
-            <span>Analyzing results with AI...</span>
+            <span>Analyzing results with ${modelName}...</span>
         </div>
     `;
     
@@ -226,7 +250,8 @@ async function generateExplanation(query, data) {
             body: JSON.stringify({
                 query: query,
                 tables: data.tables,
-                total_rows: data.total_rows
+                total_rows: data.total_rows,
+                model: selectedModel
             })
         });
         
@@ -242,7 +267,13 @@ async function generateExplanation(query, data) {
         } else {
             // Parse markdown and display
             const htmlContent = marked.parse(result.explanation);
-            explanationContainer.innerHTML = `<div class="explanation-content">${htmlContent}</div>`;
+            const usedModel = result.model || selectedModel;
+            explanationContainer.innerHTML = `
+                <div class="explanation-model-badge">
+                    <i class="fas fa-robot"></i> ${modelName}
+                </div>
+                <div class="explanation-content">${htmlContent}</div>
+            `;
         }
     } catch (error) {
         explanationContainer.innerHTML = `

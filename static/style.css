@@ -549,6 +549,23 @@ body {
     color: var(--accent-purple);
 }
 
+.explanation-model-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--accent-purple);
+    border-radius: 12px;
+    font-size: 11px;
+    color: var(--accent-purple);
+    margin-bottom: 12px;
+}
+
+.explanation-model-badge i {
+    font-size: 10px;
+}
+
 .explanation-content {
     color: var(--text-primary);
     line-height: 1.7;
