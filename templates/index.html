@@ -23,7 +23,7 @@
                     <i class="fas fa-search"></i> Explorer
                 </button>
                 <button class="nav-tab" data-tab="benchmark">
-                    <i class="fas fa-flask"></i> Benchmark
+                    <i class="fas fa-balance-scale"></i> Comparison
                 </button>
             </div>
             
@@ -167,14 +167,14 @@ Heartbeat
             </div>
         </main>
 
-        <!-- Main Content - Benchmark Section -->
+        <!-- Main Content - Comparison Section -->
         <main class="main-content" id="benchmark-content" style="display: none;">
             <header class="header">
-                <h1><i class="fas fa-flask"></i> Model Comparison Benchmark</h1>
+                <h1><i class="fas fa-balance-scale"></i> Model Comparison</h1>
                 <p>Compare how different AI models explain your query results</p>
             </header>
 
-            <!-- Benchmark Overview -->
+            <!-- Comparison Overview -->
             <div class="benchmark-overview">
                 <div class="benchmark-info-cards">
                     <div class="info-card">
@@ -198,7 +198,7 @@ Heartbeat
             <!-- Current Query Status -->
             <div class="benchmark-section current-query-section">
                 <div class="section-header">
-                    <h3><i class="fas fa-database"></i> Current Query to Benchmark</h3>
+                    <h3><i class="fas fa-database"></i> Current Query to Compare</h3>
                 </div>
                 <div id="current-query-status">
                     <div class="no-query-message">
@@ -224,7 +224,7 @@ Heartbeat
                 </div>
             </div>
 
-            <!-- Run Benchmark -->
+            <!-- Run Comparison -->
             <div class="benchmark-section">
                 <div class="section-header">
                     <h3><i class="fas fa-play-circle"></i> Compare Models</h3>
@@ -254,15 +254,15 @@ Heartbeat
                         </select>
                     </div>
                     <button id="run-benchmark" class="btn btn-primary btn-large">
-                        <i class="fas fa-rocket"></i> Run Benchmark
+                        <i class="fas fa-rocket"></i> Run Comparison
                     </button>
                 </div>
             </div>
 
-            <!-- Benchmark Results -->
+            <!-- Comparison Results -->
             <div class="benchmark-section" id="benchmark-results-section" style="display: none;">
                 <div class="section-header">
-                    <h3><i class="fas fa-trophy"></i> Benchmark Results</h3>
+                    <h3><i class="fas fa-trophy"></i> Comparison Results</h3>
                     <div class="results-actions">
                         <button id="export-benchmark-json" class="btn btn-icon" title="Export JSON">
                             <i class="fas fa-file-code"></i>
