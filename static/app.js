@@ -1552,3 +1552,698 @@ window.closeModal = closeModal;
 window.saveTestCase = saveTestCase;
 window.exportBenchmarkToJson = exportBenchmarkToJson;
 window.exportBenchmarkToCsv = exportBenchmarkToCsv;
+
+// ==========================================
+// BULK BENCHMARK FUNCTIONALITY
+// ==========================================
+
+// Bulk Benchmark State
+let bulkQueries = [];
+let bulkBenchmarkResults = null;
+let bulkBenchmarkChart = null;
+let currentWeights = {
+    faithfulness: 25,
+    structure: 10,
+    clarity: 15,
+    analysisDepth: 20,
+    contextAccuracy: 15,
+    actionability: 10,
+    conciseness: 5
+};
+
+// Initialize Bulk Benchmark
+document.addEventListener('DOMContentLoaded', () => {
+    // Add bulk benchmark tab handling
+    const bulkBenchmarkContent = document.getElementById('bulk-benchmark-content');
+    if (bulkBenchmarkContent) {
+        initBulkBenchmark();
+    }
+});
+
+function initBulkBenchmark() {
+    // Add query button
+    const addQueryBtn = document.getElementById('add-benchmark-query');
+    if (addQueryBtn) {
+        addQueryBtn.addEventListener('click', () => addBulkQuery());
+    }
+    
+    // Load example queries button
+    const loadExamplesBtn = document.getElementById('load-example-queries');
+    if (loadExamplesBtn) {
+        loadExamplesBtn.addEventListener('click', loadExampleQueries);
+    }
+    
+    // Run benchmark button
+    const runBulkBtn = document.getElementById('run-bulk-benchmark');
+    if (runBulkBtn) {
+        runBulkBtn.addEventListener('click', runBulkBenchmark);
+    }
+    
+    // Weight inputs
+    document.querySelectorAll('.weight-input').forEach(input => {
+        input.addEventListener('change', updateWeightsTotal);
+        input.addEventListener('input', updateWeightsTotal);
+    });
+    
+    // Recalculate button
+    const recalcBtn = document.getElementById('recalculate-scores');
+    if (recalcBtn) {
+        recalcBtn.addEventListener('click', recalculateScores);
+    }
+    
+    // Export buttons
+    const exportJsonBtn = document.getElementById('export-bulk-json');
+    if (exportJsonBtn) {
+        exportJsonBtn.addEventListener('click', exportBulkToJson);
+    }
+    
+    const exportCsvBtn = document.getElementById('export-bulk-csv');
+    if (exportCsvBtn) {
+        exportCsvBtn.addEventListener('click', exportBulkToCsv);
+    }
+    
+    // Add initial empty query
+    addBulkQuery();
+}
+
+function addBulkQuery(queryText = '') {
+    const container = document.getElementById('bulk-query-list');
+    const queryNum = bulkQueries.length + 1;
+    const queryId = `bulk-query-${Date.now()}`;
+    
+    const queryItem = document.createElement('div');
+    queryItem.className = 'bulk-query-item';
+    queryItem.id = queryId;
+    queryItem.innerHTML = `
+        <div class="bulk-query-header">
+            <span class="bulk-query-number">Query ${queryNum}</span>
+            <button class="bulk-query-remove" onclick="removeBulkQuery('${queryId}')">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <textarea class="bulk-query-input" placeholder="Enter KQL query...">${queryText}</textarea>
+        <div class="bulk-query-status" id="${queryId}-status"></div>
+    `;
+    
+    container.appendChild(queryItem);
+    bulkQueries.push({ id: queryId, query: queryText });
+    
+    // Update query text on input
+    const textarea = queryItem.querySelector('.bulk-query-input');
+    textarea.addEventListener('input', (e) => {
+        const idx = bulkQueries.findIndex(q => q.id === queryId);
+        if (idx >= 0) {
+            bulkQueries[idx].query = e.target.value;
+        }
+    });
+    
+    updateBulkQueryNumbers();
+}
+
+function removeBulkQuery(queryId) {
+    const element = document.getElementById(queryId);
+    if (element) {
+        element.remove();
+        bulkQueries = bulkQueries.filter(q => q.id !== queryId);
+        updateBulkQueryNumbers();
+    }
+}
+
+function updateBulkQueryNumbers() {
+    const items = document.querySelectorAll('.bulk-query-item');
+    items.forEach((item, idx) => {
+        const numberEl = item.querySelector('.bulk-query-number');
+        if (numberEl) {
+            numberEl.textContent = `Query ${idx + 1}`;
+        }
+    });
+}
+
+async function loadExampleQueries() {
+    // Clear existing
+    const container = document.getElementById('bulk-query-list');
+    container.innerHTML = '';
+    bulkQueries = [];
+    
+    const exampleQueries = [
+        `AppRequests
+| where Success == false
+| summarize FailureCount = sum(ItemCount) by ResultCode
+| order by FailureCount desc
+| take 5`,
+        `Heartbeat
+| where TimeGenerated > ago(1h)
+| summarize Count = count() by Computer
+| order by Count desc
+| take 10`,
+        `AppExceptions
+| where TimeGenerated > ago(24h)
+| summarize Count = count() by ExceptionType, ProblemId
+| order by Count desc
+| take 10`,
+        `AppPerformanceCounters
+| where TimeGenerated > ago(1h)
+| where Name == "% Processor Time"
+| summarize AvgCPU = avg(Value) by bin(TimeGenerated, 5m)
+| order by TimeGenerated asc`,
+        `AppDependencies
+| where Success == false
+| summarize FailedCalls = count() by DependencyType, Name
+| order by FailedCalls desc
+| take 10`
+    ];
+    
+    exampleQueries.forEach(query => addBulkQuery(query));
+    showToast('Loaded 5 example queries', 'success');
+}
+
+function populateBulkBenchmarkModels() {
+    const container = document.getElementById('bulk-benchmark-models');
+    if (!container || !availableModels.length) return;
+    
+    container.innerHTML = availableModels.map(model => `
+        <label class="model-checkbox">
+            <input type="checkbox" value="${model.id}" checked>
+            <span>${model.name}</span>
+        </label>
+    `).join('');
+}
+
+function getSelectedBulkModels() {
+    const container = document.getElementById('bulk-benchmark-models');
+    const checkboxes = container.querySelectorAll('input[type="checkbox"]:checked');
+    return Array.from(checkboxes).map(cb => cb.value);
+}
+
+async function runBulkBenchmark() {
+    // Collect queries from textareas
+    const queryItems = document.querySelectorAll('.bulk-query-item');
+    const queries = [];
+    
+    queryItems.forEach((item, idx) => {
+        const textarea = item.querySelector('.bulk-query-input');
+        const query = textarea.value.trim();
+        if (query) {
+            queries.push({
+                id: item.id,
+                index: idx + 1,
+                query: query
+            });
+        }
+    });
+    
+    if (queries.length === 0) {
+        showToast('Please add at least one query', 'error');
+        return;
+    }
+    
+    const selectedModels = getSelectedBulkModels();
+    if (selectedModels.length === 0) {
+        showToast('Please select at least one model', 'error');
+        return;
+    }
+    
+    const workspaceId = workspaceIdInput.value.trim();
+    if (!workspaceId) {
+        showToast('Please enter a Workspace ID in the Connection panel', 'error');
+        return;
+    }
+    
+    const audience = document.getElementById('bulk-target-audience').value;
+    
+    // Show progress
+    document.getElementById('bulk-progress-section').style.display = 'block';
+    document.getElementById('bulk-results-section').style.display = 'none';
+    
+    const totalSteps = queries.length * selectedModels.length;
+    let completedSteps = 0;
+    
+    // Initialize results structure
+    const modelResults = {};
+    selectedModels.forEach(modelId => {
+        const modelInfo = availableModels.find(m => m.id === modelId);
+        modelResults[modelId] = {
+            model: modelId,
+            modelName: modelInfo ? modelInfo.name : modelId,
+            queries: []
+        };
+    });
+    
+    // Process each query
+    for (const queryData of queries) {
+        const queryElement = document.getElementById(queryData.id);
+        const statusElement = document.getElementById(`${queryData.id}-status`);
+        
+        queryElement.classList.remove('completed', 'error');
+        queryElement.classList.add('running');
+        statusElement.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running query...';
+        statusElement.className = 'bulk-query-status running';
+        
+        try {
+            // Execute query
+            const queryResponse = await fetch('/api/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    workspace_id: workspaceId,
+                    query: queryData.query,
+                    timespan_hours: parseInt(timespanSelect.value)
+                })
+            });
+            
+            const queryResult = await queryResponse.json();
+            
+            if (queryResult.error) {
+                throw new Error(queryResult.error);
+            }
+            
+            // Now get explanation and evaluation for each model
+            for (const modelId of selectedModels) {
+                updateBulkProgress(completedSteps, totalSteps, `Query ${queryData.index}: Getting ${modelId} explanation...`);
+                
+                try {
+                    // Get explanation
+                    const explainResponse = await fetch('/api/explain', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            query: queryData.query,
+                            tables: queryResult.tables,
+                            model: modelId
+                        })
+                    });
+                    
+                    const explainResult = await explainResponse.json();
+                    
+                    if (explainResult.error) {
+                        throw new Error(explainResult.error);
+                    }
+                    
+                    // Evaluate explanation
+                    updateBulkProgress(completedSteps, totalSteps, `Query ${queryData.index}: Evaluating ${modelId}...`);
+                    
+                    const evalResponse = await fetch('/api/benchmark/evaluate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            query: queryData.query,
+                            tables: queryResult.tables,
+                            explanation: explainResult.explanation,
+                            audience: audience
+                        })
+                    });
+                    
+                    const evalResult = await evalResponse.json();
+                    
+                    if (evalResult.error) {
+                        throw new Error(evalResult.error);
+                    }
+                    
+                    modelResults[modelId].queries.push({
+                        queryIndex: queryData.index,
+                        query: queryData.query,
+                        explanation: explainResult.explanation,
+                        scores: evalResult.scores
+                    });
+                    
+                } catch (modelError) {
+                    console.error(`Error with model ${modelId}:`, modelError);
+                    modelResults[modelId].queries.push({
+                        queryIndex: queryData.index,
+                        query: queryData.query,
+                        error: modelError.message
+                    });
+                }
+                
+                completedSteps++;
+                updateBulkProgress(completedSteps, totalSteps);
+            }
+            
+            queryElement.classList.remove('running');
+            queryElement.classList.add('completed');
+            statusElement.innerHTML = '<i class="fas fa-check"></i> Completed';
+            statusElement.className = 'bulk-query-status completed';
+            
+        } catch (error) {
+            queryElement.classList.remove('running');
+            queryElement.classList.add('error');
+            statusElement.innerHTML = `<i class="fas fa-times"></i> Error: ${error.message}`;
+            statusElement.className = 'bulk-query-status error';
+        }
+    }
+    
+    // Process and display results
+    bulkBenchmarkResults = processBulkResults(modelResults, queries.length);
+    displayBulkResults();
+}
+
+function updateBulkProgress(completed, total, details = '') {
+    const percent = total > 0 ? (completed / total) * 100 : 0;
+    document.getElementById('bulk-progress-bar').style.width = `${percent}%`;
+    document.getElementById('bulk-progress-text').textContent = `${completed} / ${total} steps completed`;
+    document.getElementById('bulk-progress-details').textContent = details;
+}
+
+function processBulkResults(modelResults, queryCount) {
+    const results = [];
+    
+    for (const [modelId, data] of Object.entries(modelResults)) {
+        const validQueries = data.queries.filter(q => !q.error && q.scores);
+        
+        if (validQueries.length === 0) {
+            continue;
+        }
+        
+        // Calculate average scores
+        const avgScores = {
+            faithfulness: 0,
+            structure: 0,
+            clarity: 0,
+            analysisDepth: 0,
+            contextAccuracy: 0,
+            actionability: 0,
+            conciseness: 0
+        };
+        
+        validQueries.forEach(q => {
+            for (const dim of Object.keys(avgScores)) {
+                avgScores[dim] += q.scores[dim] || 0;
+            }
+        });
+        
+        for (const dim of Object.keys(avgScores)) {
+            avgScores[dim] = avgScores[dim] / validQueries.length;
+        }
+        
+        // Calculate weighted score
+        const weightedScore = calculateWeightedScore(avgScores);
+        
+        results.push({
+            model: modelId,
+            modelName: data.modelName,
+            avgScores: avgScores,
+            weightedScore: weightedScore,
+            queriesCompleted: validQueries.length,
+            totalQueries: queryCount,
+            queries: data.queries
+        });
+    }
+    
+    // Sort by weighted score
+    results.sort((a, b) => b.weightedScore - a.weightedScore);
+    
+    return results;
+}
+
+function calculateWeightedScore(scores) {
+    let total = 0;
+    let weightSum = 0;
+    
+    for (const [dim, weight] of Object.entries(currentWeights)) {
+        if (scores[dim] !== undefined) {
+            total += scores[dim] * weight;
+            weightSum += weight;
+        }
+    }
+    
+    return weightSum > 0 ? total / weightSum : 0;
+}
+
+function updateWeightsTotal() {
+    let total = 0;
+    document.querySelectorAll('.weight-input').forEach(input => {
+        const dim = input.dataset.dim;
+        const value = parseInt(input.value) || 0;
+        currentWeights[dim] = value;
+        total += value;
+    });
+    
+    const totalEl = document.getElementById('weights-total');
+    totalEl.textContent = total;
+    totalEl.classList.toggle('invalid', total !== 100);
+}
+
+function recalculateScores() {
+    if (!bulkBenchmarkResults) return;
+    
+    // Recalculate weighted scores
+    bulkBenchmarkResults.forEach(result => {
+        result.weightedScore = calculateWeightedScore(result.avgScores);
+    });
+    
+    // Re-sort
+    bulkBenchmarkResults.sort((a, b) => b.weightedScore - a.weightedScore);
+    
+    // Re-render
+    displayBulkResults();
+    showToast('Scores recalculated', 'success');
+}
+
+function displayBulkResults() {
+    if (!bulkBenchmarkResults || bulkBenchmarkResults.length === 0) {
+        showToast('No results to display', 'error');
+        return;
+    }
+    
+    document.getElementById('bulk-results-section').style.display = 'block';
+    
+    // Winner card
+    const winner = bulkBenchmarkResults[0];
+    const winnerCard = document.getElementById('bulk-winner-card');
+    winnerCard.innerHTML = `
+        <h3><i class="fas fa-crown"></i> Best Performing Model</h3>
+        <div class="winner-name">${winner.modelName}</div>
+        <div class="winner-score">Weighted Score: ${winner.weightedScore.toFixed(2)}</div>
+    `;
+    
+    // Leaderboard
+    const leaderboardBody = document.getElementById('bulk-leaderboard-body');
+    leaderboardBody.innerHTML = bulkBenchmarkResults.map((result, idx) => `
+        <tr class="rank-${idx + 1}">
+            <td>${idx + 1}</td>
+            <td class="model-name">${result.modelName}</td>
+            <td class="weighted-score">${result.weightedScore.toFixed(2)}</td>
+            <td>${result.avgScores.faithfulness.toFixed(2)}</td>
+            <td>${result.avgScores.structure.toFixed(2)}</td>
+            <td>${result.avgScores.clarity.toFixed(2)}</td>
+            <td>${result.avgScores.analysisDepth.toFixed(2)}</td>
+            <td>${result.avgScores.contextAccuracy.toFixed(2)}</td>
+            <td>${result.avgScores.actionability.toFixed(2)}</td>
+            <td>${result.avgScores.conciseness.toFixed(2)}</td>
+        </tr>
+    `).join('');
+    
+    // Chart
+    renderBulkChart();
+    
+    // Per-query results
+    renderPerQueryResults();
+}
+
+function renderBulkChart() {
+    const ctx = document.getElementById('bulk-benchmark-chart');
+    if (!ctx) return;
+    
+    if (bulkBenchmarkChart) {
+        bulkBenchmarkChart.destroy();
+    }
+    
+    const dimensions = ['faithfulness', 'structure', 'clarity', 'analysisDepth', 'contextAccuracy', 'actionability', 'conciseness'];
+    const labels = ['Faithfulness', 'Structure', 'Clarity', 'Depth', 'Context', 'Actionability', 'Conciseness'];
+    
+    const colors = [
+        'rgba(166, 227, 161, 0.8)',
+        'rgba(137, 180, 250, 0.8)',
+        'rgba(249, 226, 175, 0.8)',
+        'rgba(203, 166, 247, 0.8)',
+        'rgba(243, 139, 168, 0.8)'
+    ];
+    
+    const datasets = bulkBenchmarkResults.map((result, idx) => ({
+        label: result.modelName,
+        data: dimensions.map(dim => result.avgScores[dim]),
+        backgroundColor: colors[idx % colors.length],
+        borderColor: colors[idx % colors.length].replace('0.8', '1'),
+        borderWidth: 2
+    }));
+    
+    bulkBenchmarkChart = new Chart(ctx, {
+        type: 'radar',
+        data: {
+            labels: labels,
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            scales: {
+                r: {
+                    beginAtZero: true,
+                    max: 5,
+                    ticks: {
+                        stepSize: 1,
+                        color: '#a6adc8'
+                    },
+                    grid: {
+                        color: '#45475a'
+                    },
+                    pointLabels: {
+                        color: '#cdd6f4',
+                        font: {
+                            size: 12
+                        }
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        color: '#cdd6f4',
+                        padding: 15,
+                        usePointStyle: true
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderPerQueryResults() {
+    const container = document.getElementById('per-query-results-container');
+    if (!container || !bulkBenchmarkResults) return;
+    
+    // Get all unique queries
+    const queriesMap = new Map();
+    bulkBenchmarkResults.forEach(result => {
+        result.queries.forEach(q => {
+            if (!queriesMap.has(q.queryIndex)) {
+                queriesMap.set(q.queryIndex, {
+                    index: q.queryIndex,
+                    query: q.query,
+                    results: []
+                });
+            }
+            queriesMap.get(q.queryIndex).results.push({
+                model: result.model,
+                modelName: result.modelName,
+                scores: q.scores,
+                error: q.error
+            });
+        });
+    });
+    
+    const queriesArray = Array.from(queriesMap.values()).sort((a, b) => a.index - b.index);
+    
+    container.innerHTML = queriesArray.map(queryData => `
+        <div class="per-query-item" onclick="togglePerQueryItem(this)">
+            <div class="per-query-header">
+                <h5>
+                    <span>Query ${queryData.index}</span>
+                    <span class="query-preview">${escapeHtml(queryData.query.substring(0, 60))}${queryData.query.length > 60 ? '...' : ''}</span>
+                </h5>
+                <i class="fas fa-chevron-down"></i>
+            </div>
+            <div class="per-query-content">
+                <pre style="margin-bottom: 15px; padding: 10px; background: var(--bg-secondary); border-radius: 4px; font-size: 12px; overflow-x: auto;">${escapeHtml(queryData.query)}</pre>
+                <div class="per-query-scores">
+                    ${queryData.results.map(r => `
+                        <div class="per-query-model-score">
+                            <div class="model-name">${r.modelName}</div>
+                            ${r.error ? `<div class="score" style="color: var(--accent-red);">Error</div>` : `
+                                <div class="score">${calculateWeightedScore(r.scores).toFixed(2)}</div>
+                                <div class="score-label">Weighted Score</div>
+                            `}
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function togglePerQueryItem(element) {
+    element.classList.toggle('expanded');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function exportBulkToJson() {
+    if (!bulkBenchmarkResults) {
+        showToast('No results to export', 'error');
+        return;
+    }
+    
+    const exportData = {
+        timestamp: new Date().toISOString(),
+        weights: currentWeights,
+        results: bulkBenchmarkResults
+    };
+    
+    const json = JSON.stringify(exportData, null, 2);
+    downloadFile(json, 'bulk-benchmark-results.json', 'application/json');
+    showToast('Results exported', 'success');
+}
+
+function exportBulkToCsv() {
+    if (!bulkBenchmarkResults) {
+        showToast('No results to export', 'error');
+        return;
+    }
+    
+    const headers = ['Rank', 'Model', 'Weighted Score', 'Faithfulness', 'Structure', 'Clarity', 'Depth', 'Context', 'Actionability', 'Conciseness', 'Queries Completed'];
+    let csv = headers.join(',') + '\n';
+    
+    bulkBenchmarkResults.forEach((result, idx) => {
+        const row = [
+            idx + 1,
+            `"${result.modelName}"`,
+            result.weightedScore.toFixed(2),
+            result.avgScores.faithfulness.toFixed(2),
+            result.avgScores.structure.toFixed(2),
+            result.avgScores.clarity.toFixed(2),
+            result.avgScores.analysisDepth.toFixed(2),
+            result.avgScores.contextAccuracy.toFixed(2),
+            result.avgScores.actionability.toFixed(2),
+            result.avgScores.conciseness.toFixed(2),
+            result.queriesCompleted
+        ];
+        csv += row.join(',') + '\n';
+    });
+    
+    downloadFile(csv, 'bulk-benchmark-results.csv', 'text/csv');
+    showToast('Results exported', 'success');
+}
+
+// Update tab switching to handle bulk benchmark
+const originalSwitchTab = window.switchTab;
+window.switchTab = function(tabId) {
+    // Hide all content sections
+    document.querySelectorAll('.main-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
+    
+    // Show selected content
+    const contentId = tabId === 'explorer' ? 'explorer-content' : 
+                     tabId === 'benchmark' ? 'benchmark-content' : 
+                     tabId === 'bulk-benchmark' ? 'bulk-benchmark-content' : null;
+    
+    if (contentId) {
+        document.getElementById(contentId).style.display = 'block';
+    }
+    
+    // Update active tab
+    document.querySelector(`.nav-tab[data-tab="${tabId}"]`)?.classList.add('active');
+    
+    // Populate models for bulk benchmark
+    if (tabId === 'bulk-benchmark') {
+        populateBulkBenchmarkModels();
+    }
+};
+
+// Make functions globally available
+window.removeBulkQuery = removeBulkQuery;
+window.togglePerQueryItem = togglePerQueryItem;

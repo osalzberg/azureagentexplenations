@@ -25,6 +25,9 @@
                 <button class="nav-tab" data-tab="benchmark">
                     <i class="fas fa-balance-scale"></i> Comparison
                 </button>
+                <button class="nav-tab" data-tab="bulk-benchmark">
+                    <i class="fas fa-chart-bar"></i> Benchmark
+                </button>
             </div>
             
             <div class="connection-panel">
@@ -396,6 +399,174 @@ Heartbeat
                             <p class="failure-quote">"Consider monitoring your application and setting up alerts."</p>
                             <p class="failure-reason">❌ Generic advice not tied to the specific data or findings.</p>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Main Content - Bulk Benchmark Section -->
+        <main class="main-content" id="bulk-benchmark-content" style="display: none;">
+            <header class="header">
+                <h1><i class="fas fa-chart-bar"></i> Multi-Query Benchmark</h1>
+                <p>Run benchmarks across multiple queries to get comprehensive model scores</p>
+            </header>
+
+            <!-- Benchmark Configuration -->
+            <div class="benchmark-section">
+                <div class="section-header">
+                    <h3><i class="fas fa-cog"></i> Benchmark Configuration</h3>
+                </div>
+                <div class="bulk-benchmark-config">
+                    <div class="form-group">
+                        <label>Select Models to Benchmark</label>
+                        <div class="model-checkboxes" id="bulk-benchmark-models">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Target Audience</label>
+                            <select id="bulk-target-audience">
+                                <option value="developer">Developer</option>
+                                <option value="sre">SRE / DevOps</option>
+                                <option value="analyst">Data Analyst</option>
+                                <option value="executive">Executive / Non-Technical</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Query List -->
+            <div class="benchmark-section">
+                <div class="section-header">
+                    <h3><i class="fas fa-list"></i> Queries to Benchmark</h3>
+                    <button class="btn btn-secondary btn-small" id="add-benchmark-query">
+                        <i class="fas fa-plus"></i> Add Query
+                    </button>
+                </div>
+                <div id="bulk-query-list" class="bulk-query-list">
+                    <!-- Query items will be added here -->
+                </div>
+                <div class="bulk-query-actions">
+                    <button class="btn btn-secondary" id="load-example-queries">
+                        <i class="fas fa-magic"></i> Load Example Queries
+                    </button>
+                    <button class="btn btn-primary btn-large" id="run-bulk-benchmark">
+                        <i class="fas fa-rocket"></i> Run Benchmark
+                    </button>
+                </div>
+            </div>
+
+            <!-- Progress -->
+            <div class="benchmark-section" id="bulk-progress-section" style="display: none;">
+                <div class="section-header">
+                    <h3><i class="fas fa-tasks"></i> Progress</h3>
+                </div>
+                <div class="bulk-progress">
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="bulk-progress-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-text" id="bulk-progress-text">0 / 0 queries completed</div>
+                    <div class="progress-details" id="bulk-progress-details"></div>
+                </div>
+            </div>
+
+            <!-- Aggregated Results -->
+            <div class="benchmark-section" id="bulk-results-section" style="display: none;">
+                <div class="section-header">
+                    <h3><i class="fas fa-trophy"></i> Benchmark Results</h3>
+                    <div class="results-actions">
+                        <button id="export-bulk-json" class="btn btn-icon" title="Export JSON">
+                            <i class="fas fa-file-code"></i>
+                        </button>
+                        <button id="export-bulk-csv" class="btn btn-icon" title="Export CSV">
+                            <i class="fas fa-file-csv"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Overall Winner -->
+                <div class="bulk-winner-card" id="bulk-winner-card">
+                    <!-- Populated by JavaScript -->
+                </div>
+
+                <!-- Aggregated Scores Chart -->
+                <div class="benchmark-chart-container">
+                    <canvas id="bulk-benchmark-chart"></canvas>
+                </div>
+
+                <!-- Dimension Weights -->
+                <div class="weights-panel">
+                    <h4><i class="fas fa-sliders-h"></i> Dimension Weights</h4>
+                    <p class="weights-description">Adjust weights to prioritize different dimensions. Total must equal 100%.</p>
+                    <div class="weights-grid" id="weights-grid">
+                        <div class="weight-item">
+                            <label>Faithfulness</label>
+                            <input type="number" class="weight-input" data-dim="faithfulness" value="25" min="0" max="100">%
+                        </div>
+                        <div class="weight-item">
+                            <label>Structure</label>
+                            <input type="number" class="weight-input" data-dim="structure" value="10" min="0" max="100">%
+                        </div>
+                        <div class="weight-item">
+                            <label>Clarity</label>
+                            <input type="number" class="weight-input" data-dim="clarity" value="15" min="0" max="100">%
+                        </div>
+                        <div class="weight-item">
+                            <label>Analysis Depth</label>
+                            <input type="number" class="weight-input" data-dim="analysisDepth" value="20" min="0" max="100">%
+                        </div>
+                        <div class="weight-item">
+                            <label>Azure Context</label>
+                            <input type="number" class="weight-input" data-dim="contextAccuracy" value="15" min="0" max="100">%
+                        </div>
+                        <div class="weight-item">
+                            <label>Actionability</label>
+                            <input type="number" class="weight-input" data-dim="actionability" value="10" min="0" max="100">%
+                        </div>
+                        <div class="weight-item">
+                            <label>Conciseness</label>
+                            <input type="number" class="weight-input" data-dim="conciseness" value="5" min="0" max="100">%
+                        </div>
+                    </div>
+                    <div class="weights-total">
+                        <span>Total: <strong id="weights-total">100</strong>%</span>
+                        <button class="btn btn-secondary btn-small" id="recalculate-scores">
+                            <i class="fas fa-calculator"></i> Recalculate
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Model Leaderboard -->
+                <div class="leaderboard-section">
+                    <h4><i class="fas fa-medal"></i> Model Leaderboard</h4>
+                    <table class="leaderboard-table" id="bulk-leaderboard">
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Model</th>
+                                <th>Weighted Score</th>
+                                <th>Faith</th>
+                                <th>Struct</th>
+                                <th>Clarity</th>
+                                <th>Depth</th>
+                                <th>Context</th>
+                                <th>Action</th>
+                                <th>Concise</th>
+                            </tr>
+                        </thead>
+                        <tbody id="bulk-leaderboard-body">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Per-Query Results -->
+                <div class="per-query-results">
+                    <h4><i class="fas fa-list-alt"></i> Per-Query Results</h4>
+                    <div id="per-query-results-container">
+                        <!-- Populated by JavaScript -->
                     </div>
                 </div>
             </div>
