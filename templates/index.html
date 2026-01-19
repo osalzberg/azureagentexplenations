@@ -17,6 +17,16 @@
                 <h2>KQL Explorer</h2>
             </div>
             
+            <!-- Navigation Tabs -->
+            <div class="sidebar-nav">
+                <button class="nav-tab active" data-tab="explorer">
+                    <i class="fas fa-search"></i> Explorer
+                </button>
+                <button class="nav-tab" data-tab="benchmark">
+                    <i class="fas fa-flask"></i> Benchmark
+                </button>
+            </div>
+            
             <div class="connection-panel">
                 <h3><i class="fas fa-plug"></i> Connection</h3>
                 <div class="form-group">
@@ -55,8 +65,8 @@
             </div>
         </aside>
 
-        <!-- Main Content -->
-        <main class="main-content">
+        <!-- Main Content - Query Explorer -->
+        <main class="main-content" id="explorer-content">
             <header class="header">
                 <h1><i class="fas fa-database"></i> Azure Log Analytics</h1>
                 <p>Execute KQL queries against your Log Analytics workspace</p>
@@ -152,6 +162,240 @@ Heartbeat
                     <div class="explanation-loading">
                         <i class="fas fa-spinner fa-spin"></i>
                         <span>Analyzing results...</span>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Main Content - Benchmark Section -->
+        <main class="main-content" id="benchmark-content" style="display: none;">
+            <header class="header">
+                <h1><i class="fas fa-flask"></i> Model Comparison Benchmark</h1>
+                <p>Compare how different AI models explain your query results</p>
+            </header>
+
+            <!-- Benchmark Overview -->
+            <div class="benchmark-overview">
+                <div class="benchmark-info-cards">
+                    <div class="info-card">
+                        <i class="fas fa-bullseye"></i>
+                        <h4>One Query</h4>
+                        <p>Run YOUR query, then compare how all models explain it</p>
+                    </div>
+                    <div class="info-card">
+                        <i class="fas fa-balance-scale"></i>
+                        <h4>Fair Comparison</h4>
+                        <p>All models receive identical query and results</p>
+                    </div>
+                    <div class="info-card">
+                        <i class="fas fa-chart-line"></i>
+                        <h4>7 Dimensions</h4>
+                        <p>Faithfulness, clarity, depth, context, actionability & more</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Current Query Status -->
+            <div class="benchmark-section current-query-section">
+                <div class="section-header">
+                    <h3><i class="fas fa-database"></i> Current Query to Benchmark</h3>
+                </div>
+                <div id="current-query-status">
+                    <div class="no-query-message">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <p><strong>No query results yet!</strong></p>
+                        <p>Go to the <strong>Explorer</strong> tab, run a KQL query, then come back here to compare models.</p>
+                        <button class="btn btn-primary" onclick="switchTab('explorer')">
+                            <i class="fas fa-arrow-left"></i> Go to Explorer
+                        </button>
+                    </div>
+                </div>
+                <div id="current-query-preview" style="display: none;">
+                    <div class="query-preview-card">
+                        <div class="query-preview-header">
+                            <span class="query-preview-label">Query:</span>
+                        </div>
+                        <pre id="benchmark-query-text"></pre>
+                        <div class="query-preview-meta">
+                            <span><i class="fas fa-table"></i> <span id="benchmark-row-count">0</span> rows</span>
+                            <span><i class="fas fa-columns"></i> <span id="benchmark-col-count">0</span> columns</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Run Benchmark -->
+            <div class="benchmark-section">
+                <div class="section-header">
+                    <h3><i class="fas fa-play-circle"></i> Compare Models</h3>
+                </div>
+                <div class="benchmark-controls">
+                    <div class="form-group">
+                        <label>Select Models to Compare</label>
+                        <div class="model-checkboxes" id="benchmark-models">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Evaluation Method</label>
+                        <select id="evaluation-method">
+                            <option value="llm-judge">LLM-as-Judge (Automated)</option>
+                            <option value="human">Human Review (Manual)</option>
+                            <option value="hybrid">Hybrid (LLM + Human)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Target Audience</label>
+                        <select id="target-audience">
+                            <option value="developer">Developer</option>
+                            <option value="sre">SRE / DevOps</option>
+                            <option value="analyst">Data Analyst</option>
+                            <option value="executive">Executive / Non-Technical</option>
+                        </select>
+                    </div>
+                    <button id="run-benchmark" class="btn btn-primary btn-large">
+                        <i class="fas fa-rocket"></i> Run Benchmark
+                    </button>
+                </div>
+            </div>
+
+            <!-- Benchmark Results -->
+            <div class="benchmark-section" id="benchmark-results-section" style="display: none;">
+                <div class="section-header">
+                    <h3><i class="fas fa-trophy"></i> Benchmark Results</h3>
+                    <div class="results-actions">
+                        <button id="export-benchmark-json" class="btn btn-icon" title="Export JSON">
+                            <i class="fas fa-file-code"></i>
+                        </button>
+                        <button id="export-benchmark-csv" class="btn btn-icon" title="Export CSV">
+                            <i class="fas fa-file-csv"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Comparison Chart -->
+                <div class="benchmark-chart-container">
+                    <canvas id="benchmark-chart"></canvas>
+                </div>
+
+                <!-- Detailed Results Table -->
+                <div class="benchmark-results-table" id="benchmark-results-table">
+                    <!-- Populated by JavaScript -->
+                </div>
+
+                <!-- Individual Explanations -->
+                <div class="explanation-comparisons" id="explanation-comparisons">
+                    <!-- Populated by JavaScript -->
+                </div>
+            </div>
+
+            <!-- Scoring Rubric Reference -->
+            <div class="benchmark-section collapsible">
+                <div class="section-header collapsible-header" onclick="toggleCollapsible(this)">
+                    <h3><i class="fas fa-book"></i> Scoring Rubric</h3>
+                    <i class="fas fa-chevron-down collapse-icon"></i>
+                </div>
+                <div class="collapsible-content">
+                    <div class="rubric-grid">
+                        <div class="rubric-item">
+                            <h4><i class="fas fa-check-double"></i> Faithfulness (25%)</h4>
+                            <p>No hallucinated metrics, causes, tables, or columns</p>
+                            <ul class="rubric-scale">
+                                <li><strong>5:</strong> Perfectly accurate, all claims supported by data</li>
+                                <li><strong>3:</strong> Mostly accurate, minor unsupported inferences</li>
+                                <li><strong>1:</strong> Contains hallucinated data or false claims</li>
+                            </ul>
+                        </div>
+                        <div class="rubric-item">
+                            <h4><i class="fas fa-sitemap"></i> Structure (10%)</h4>
+                            <p>Logical sections, headings, good flow</p>
+                            <ul class="rubric-scale">
+                                <li><strong>5:</strong> Clear sections, logical flow, easy to scan</li>
+                                <li><strong>3:</strong> Some structure, could be better organized</li>
+                                <li><strong>1:</strong> Wall of text, no clear organization</li>
+                            </ul>
+                        </div>
+                        <div class="rubric-item">
+                            <h4><i class="fas fa-language"></i> Clarity (15%)</h4>
+                            <p>Explains KQL and Azure concepts clearly</p>
+                            <ul class="rubric-scale">
+                                <li><strong>5:</strong> Crystal clear, accessible to target audience</li>
+                                <li><strong>3:</strong> Understandable but some jargon unexplained</li>
+                                <li><strong>1:</strong> Confusing, assumes too much knowledge</li>
+                            </ul>
+                        </div>
+                        <div class="rubric-item">
+                            <h4><i class="fas fa-brain"></i> Analytical Depth (20%)</h4>
+                            <p>Explains WHY the results matter</p>
+                            <ul class="rubric-scale">
+                                <li><strong>5:</strong> Deep insights, patterns, implications explained</li>
+                                <li><strong>3:</strong> Some analysis beyond restating numbers</li>
+                                <li><strong>1:</strong> Just restates the data with no insight</li>
+                            </ul>
+                        </div>
+                        <div class="rubric-item">
+                            <h4><i class="fas fa-cloud"></i> Azure Context (15%)</h4>
+                            <p>Correct interpretation of Azure telemetry</p>
+                            <ul class="rubric-scale">
+                                <li><strong>5:</strong> Expert-level Azure/App Insights knowledge</li>
+                                <li><strong>3:</strong> Correct but basic Azure understanding</li>
+                                <li><strong>1:</strong> Wrong interpretation of Azure concepts</li>
+                            </ul>
+                        </div>
+                        <div class="rubric-item">
+                            <h4><i class="fas fa-tasks"></i> Actionability (10%)</h4>
+                            <p>Relevant, realistic next steps</p>
+                            <ul class="rubric-scale">
+                                <li><strong>5:</strong> Specific, actionable, aligned with data</li>
+                                <li><strong>3:</strong> Generic but relevant recommendations</li>
+                                <li><strong>1:</strong> No recommendations or irrelevant ones</li>
+                            </ul>
+                        </div>
+                        <div class="rubric-item">
+                            <h4><i class="fas fa-compress-alt"></i> Conciseness (5%)</h4>
+                            <p>No fluff, no major omissions</p>
+                            <ul class="rubric-scale">
+                                <li><strong>5:</strong> Perfect balance, every sentence adds value</li>
+                                <li><strong>3:</strong> Slightly verbose or missing minor details</li>
+                                <li><strong>1:</strong> Extremely verbose or missing key info</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Failure Examples Reference -->
+            <div class="benchmark-section collapsible">
+                <div class="section-header collapsible-header" onclick="toggleCollapsible(this)">
+                    <h3><i class="fas fa-exclamation-triangle"></i> Failure Examples</h3>
+                    <i class="fas fa-chevron-down collapse-icon"></i>
+                </div>
+                <div class="collapsible-content">
+                    <div class="failure-examples">
+                        <div class="failure-example">
+                            <div class="failure-badge bad">Critical</div>
+                            <h4>Hallucinating Root Causes</h4>
+                            <p class="failure-quote">"The high error rate is caused by a database connection timeout issue in the payment service."</p>
+                            <p class="failure-reason">❌ Data shows errors but no evidence of database issues or payment service involvement.</p>
+                        </div>
+                        <div class="failure-example">
+                            <div class="failure-badge bad">Critical</div>
+                            <h4>Misinterpreting Azure Semantics</h4>
+                            <p class="failure-quote">"ResultCode 0 indicates a successful request."</p>
+                            <p class="failure-reason">❌ In HTTP context, ResultCode 0 typically means no response/timeout, not success (200).</p>
+                        </div>
+                        <div class="failure-example">
+                            <div class="failure-badge warning">Poor</div>
+                            <h4>Restating Without Insight</h4>
+                            <p class="failure-quote">"The query returned 5 rows. Row 1 has value 100, row 2 has value 50..."</p>
+                            <p class="failure-reason">❌ Merely restates numbers without explaining what they mean or why they matter.</p>
+                        </div>
+                        <div class="failure-example">
+                            <div class="failure-badge warning">Poor</div>
+                            <h4>Generic Recommendations</h4>
+                            <p class="failure-quote">"Consider monitoring your application and setting up alerts."</p>
+                            <p class="failure-reason">❌ Generic advice not tied to the specific data or findings.</p>
+                        </div>
                     </div>
                 </div>
             </div>

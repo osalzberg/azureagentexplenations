@@ -194,6 +194,140 @@ def test_connection():
         })
 
 
+@app.route("/api/benchmark/evaluate", methods=["POST"])
+def evaluate_explanation():
+    """Evaluate an explanation using LLM-as-judge."""
+    try:
+        data = request.get_json()
+        explanation = data.get("explanation", "")
+        test_case = data.get("testCase", {})
+        target_audience = data.get("targetAudience", "developer")
+
+        # Use GPT-4 as the judge
+        openai_client, deployment = get_openai_client("gpt-4")
+        
+        if not openai_client:
+            return jsonify({"error": "Judge model not configured"}), 500
+
+        evaluation_prompt = f"""You are a STRICT and CRITICAL evaluator for Azure Log Analytics explanations.
+Your job is to find flaws and differentiate quality. Do NOT give perfect scores unless the explanation is truly exceptional.
+Most explanations should score between 2-4, with 5 reserved for exceptional work and 1-2 for poor work.
+
+## Context
+- Target Audience: {target_audience}
+- KQL Query: {test_case.get('query', 'N/A')}
+- Result Data: {json.dumps(test_case.get('results', {}), default=str)[:1000]}
+
+## Explanation to Evaluate:
+{explanation}
+
+## Scoring Rubric (1-5 scale) - BE CRITICAL:
+
+1. **Faithfulness** (No hallucinations - CRITICAL)
+   - 5: ONLY if every single claim is directly supported by the data shown
+   - 4: Very accurate with only trivial inferences
+   - 3: Mostly accurate, some unsupported but reasonable inferences
+   - 2: Contains some claims not supported by data
+   - 1: Contains hallucinated metrics, causes, or false claims
+
+2. **Structure** (Organization)
+   - 5: Perfect structure with clear headings, logical flow, scannable
+   - 4: Well organized with minor improvements possible
+   - 3: Has some structure but could be clearer
+   - 2: Poorly organized, hard to follow
+   - 1: Wall of text, no organization
+
+3. **Clarity** (Understandable to {target_audience})
+   - 5: Crystal clear, perfectly matched to audience level
+   - 4: Clear with minor jargon issues
+   - 3: Understandable but assumes some knowledge
+   - 2: Contains unexplained technical terms
+   - 1: Confusing, wrong audience level
+
+4. **Analysis Depth** (Insights beyond restating numbers)
+   - 5: Provides genuine insights about patterns, anomalies, implications
+   - 4: Good analysis with some insights
+   - 3: Basic analysis, mostly restates data with some interpretation
+   - 2: Minimal analysis, mostly describes what's shown
+   - 1: Just restates the numbers with no insight
+
+5. **Context Accuracy** (Azure/Log Analytics knowledge)
+   - 5: Demonstrates expert Azure knowledge, correct terminology
+   - 4: Solid Azure understanding
+   - 3: Basic but correct Azure interpretation
+   - 2: Minor misunderstandings of Azure concepts
+   - 1: Fundamentally wrong Azure interpretation
+
+6. **Actionability** (Useful next steps)
+   - 5: Specific, actionable steps tied directly to the data
+   - 4: Good recommendations aligned with findings
+   - 3: Generic but relevant recommendations
+   - 2: Vague or partially relevant recommendations
+   - 1: No recommendations or completely irrelevant ones
+
+7. **Conciseness** (Efficiency of communication)
+   - 5: Every sentence adds value, perfect length
+   - 4: Mostly efficient with minor redundancy
+   - 3: Some filler or missing details
+   - 2: Too verbose or missing important info
+   - 1: Extremely verbose/repetitive OR missing critical information
+
+BE STRICT. A score of 5 should be rare. Average explanations should get 3s.
+
+Respond ONLY with a JSON object:
+{{
+    "faithfulness": <score 1-5>,
+    "structure": <score 1-5>,
+    "clarity": <score 1-5>,
+    "analysisDepth": <score 1-5>,
+    "contextAccuracy": <score 1-5>,
+    "actionability": <score 1-5>,
+    "conciseness": <score 1-5>,
+    "evaluatorNotes": "<specific critique explaining low scores>"
+}}`"""
+
+        response = openai_client.chat.completions.create(
+            model=deployment,
+            messages=[
+                {"role": "system", "content": "You are an expert evaluator. Respond only with valid JSON."},
+                {"role": "user", "content": evaluation_prompt}
+            ],
+            max_tokens=500,
+            temperature=0.3
+        )
+
+        response_text = response.choices[0].message.content.strip()
+        print(f"[BENCHMARK EVAL] Raw response: {response_text[:500]}")
+        
+        # Parse JSON response
+        try:
+            # Try to extract JSON from response
+            if response_text.startswith('```'):
+                response_text = response_text.split('```')[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:]
+            scores = json.loads(response_text)
+            print(f"[BENCHMARK EVAL] Parsed scores: {scores}")
+        except json.JSONDecodeError as e:
+            print(f"[BENCHMARK EVAL] JSON parse error: {e}")
+            # Fallback to default scores if parsing fails
+            scores = {
+                "faithfulness": 3,
+                "structure": 3,
+                "clarity": 3,
+                "analysisDepth": 3,
+                "contextAccuracy": 3,
+                "actionability": 3,
+                "conciseness": 3,
+                "evaluatorNotes": "Failed to parse evaluation response"
+            }
+
+        return jsonify({"scores": scores})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/explain", methods=["POST"])
 def explain_results():
     """Generate an AI explanation of query results."""
