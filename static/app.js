@@ -9,6 +9,7 @@ let selectedModel = 'gpt-4';
 let currentChart = null;
 let currentChartType = 'bar';
 let chartData = null;
+let cachedExamples = null;
 
 // DOM Elements
 const workspaceIdInput = document.getElementById('workspace-id');
@@ -508,6 +509,7 @@ async function loadExamples() {
     try {
         const response = await fetch('/api/examples');
         const examples = await response.json();
+        cachedExamples = examples;
         
         let html = '';
         
@@ -542,16 +544,19 @@ function toggleCategory(key) {
 }
 
 // Load example query
-async function loadExample(category, index) {
+function loadExample(category, index) {
     try {
-        const response = await fetch('/api/examples');
-        const examples = await response.json();
+        if (!cachedExamples || !cachedExamples[category] || !cachedExamples[category].queries[index]) {
+            showToast('Example not found', 'error');
+            return;
+        }
         
-        const query = examples[category].queries[index].query;
+        const query = cachedExamples[category].queries[index].query;
         kqlQueryTextarea.value = query;
         updateLineNumbers();
         showToast('Example query loaded', 'success');
     } catch (error) {
+        console.error('Failed to load example:', error);
         showToast('Failed to load example', 'error');
     }
 }

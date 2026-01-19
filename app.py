@@ -275,46 +275,37 @@ Keep the explanation concise but informative. Use bullet points for clarity. If 
 
 # KQL example queries for quick access
 KQL_EXAMPLES = {
-    "requests": {
-        "name": "Application Requests",
+    "heartbeat": {
+        "name": "Heartbeat & Health",
         "queries": [
             {
-                "name": "Recent Requests",
-                "query": "requests\n| where timestamp > ago(1h)\n| project timestamp, name, resultCode, duration, client_City\n| order by timestamp desc\n| take 100"
+                "name": "Agent Heartbeats",
+                "query": "Heartbeat\n| where TimeGenerated > ago(1h)\n| summarize LastHeartbeat=max(TimeGenerated) by Computer, OSType\n| order by LastHeartbeat desc"
             },
             {
-                "name": "Failed Requests",
-                "query": "requests\n| where timestamp > ago(24h)\n| where success == false\n| summarize count() by name, resultCode\n| order by count_ desc"
+                "name": "Heartbeat Count by Computer",
+                "query": "Heartbeat\n| where TimeGenerated > ago(24h)\n| summarize HeartbeatCount=count() by Computer\n| order by HeartbeatCount desc"
             },
             {
-                "name": "Request Duration Stats",
-                "query": "requests\n| where timestamp > ago(1h)\n| summarize avg(duration), percentile(duration, 95), max(duration) by bin(timestamp, 5m)\n| order by timestamp desc"
+                "name": "Missing Heartbeats",
+                "query": "Heartbeat\n| where TimeGenerated > ago(1d)\n| summarize LastHeartbeat=max(TimeGenerated) by Computer\n| where LastHeartbeat < ago(15m)\n| order by LastHeartbeat asc"
             }
         ]
     },
-    "exceptions": {
-        "name": "Exceptions",
+    "azureactivity": {
+        "name": "Azure Activity",
         "queries": [
             {
-                "name": "Recent Exceptions",
-                "query": "exceptions\n| where timestamp > ago(24h)\n| project timestamp, type, outerMessage, innermostMessage\n| order by timestamp desc\n| take 50"
+                "name": "Recent Activity",
+                "query": "AzureActivity\n| where TimeGenerated > ago(24h)\n| project TimeGenerated, OperationName, ActivityStatus, Caller, ResourceGroup\n| order by TimeGenerated desc\n| take 100"
             },
             {
-                "name": "Exception Summary",
-                "query": "exceptions\n| where timestamp > ago(7d)\n| summarize count() by type\n| order by count_ desc"
-            }
-        ]
-    },
-    "traces": {
-        "name": "Traces",
-        "queries": [
-            {
-                "name": "Recent Traces",
-                "query": "traces\n| where timestamp > ago(1h)\n| project timestamp, severityLevel, message\n| order by timestamp desc\n| take 100"
+                "name": "Failed Operations",
+                "query": "AzureActivity\n| where TimeGenerated > ago(24h)\n| where ActivityStatus == 'Failed'\n| summarize FailedCount=count() by OperationName, ResourceGroup\n| order by FailedCount desc"
             },
             {
-                "name": "Error Traces",
-                "query": "traces\n| where timestamp > ago(24h)\n| where severityLevel >= 3\n| project timestamp, severityLevel, message\n| order by timestamp desc"
+                "name": "Activity by Caller",
+                "query": "AzureActivity\n| where TimeGenerated > ago(7d)\n| summarize OperationCount=count() by Caller\n| order by OperationCount desc\n| take 20"
             }
         ]
     },
@@ -322,25 +313,46 @@ KQL_EXAMPLES = {
         "name": "Performance",
         "queries": [
             {
-                "name": "Page Load Times",
-                "query": "pageViews\n| where timestamp > ago(24h)\n| summarize avg(duration) by name\n| order by avg_duration desc"
+                "name": "CPU Usage",
+                "query": "Perf\n| where TimeGenerated > ago(1h)\n| where ObjectName == 'Processor' and CounterName == '% Processor Time'\n| summarize AvgCPU=avg(CounterValue) by Computer, bin(TimeGenerated, 5m)\n| order by TimeGenerated desc"
             },
             {
-                "name": "Slow Dependencies",
-                "query": "dependencies\n| where timestamp > ago(1h)\n| where duration > 1000\n| project timestamp, name, target, duration, success\n| order by duration desc\n| take 50"
+                "name": "Memory Usage",
+                "query": "Perf\n| where TimeGenerated > ago(1h)\n| where ObjectName == 'Memory' and CounterName == '% Used Memory'\n| summarize AvgMemory=avg(CounterValue) by Computer\n| order by AvgMemory desc"
+            },
+            {
+                "name": "Disk Free Space",
+                "query": "Perf\n| where TimeGenerated > ago(1h)\n| where ObjectName == 'LogicalDisk' and CounterName == '% Free Space'\n| summarize AvgFreeSpace=avg(CounterValue) by Computer, InstanceName\n| where AvgFreeSpace < 20\n| order by AvgFreeSpace asc"
             }
         ]
     },
-    "custom": {
-        "name": "Custom Queries",
+    "security": {
+        "name": "Security",
         "queries": [
             {
-                "name": "Heartbeat Check",
-                "query": "Heartbeat\n| where TimeGenerated > ago(1h)\n| summarize count() by Computer\n| order by count_ desc"
+                "name": "Security Events",
+                "query": "SecurityEvent\n| where TimeGenerated > ago(24h)\n| summarize EventCount=count() by EventID, Activity\n| order by EventCount desc\n| take 20"
             },
             {
-                "name": "Azure Activity",
-                "query": "AzureActivity\n| where TimeGenerated > ago(24h)\n| summarize count() by OperationName, ActivityStatus\n| order by count_ desc\n| take 20"
+                "name": "Failed Logons",
+                "query": "SecurityEvent\n| where TimeGenerated > ago(24h)\n| where EventID == 4625\n| summarize FailedLogons=count() by TargetAccount, Computer\n| order by FailedLogons desc"
+            },
+            {
+                "name": "Account Lockouts",
+                "query": "SecurityEvent\n| where TimeGenerated > ago(7d)\n| where EventID == 4740\n| project TimeGenerated, TargetAccount, Computer\n| order by TimeGenerated desc"
+            }
+        ]
+    },
+    "syslog": {
+        "name": "Syslog (Linux)",
+        "queries": [
+            {
+                "name": "Recent Syslog",
+                "query": "Syslog\n| where TimeGenerated > ago(1h)\n| project TimeGenerated, Computer, Facility, SeverityLevel, SyslogMessage\n| order by TimeGenerated desc\n| take 100"
+            },
+            {
+                "name": "Errors by Facility",
+                "query": "Syslog\n| where TimeGenerated > ago(24h)\n| where SeverityLevel in ('err', 'crit', 'alert', 'emerg')\n| summarize ErrorCount=count() by Facility, Computer\n| order by ErrorCount desc"
             }
         ]
     }
