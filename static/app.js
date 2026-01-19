@@ -1397,10 +1397,16 @@ function formatEvaluatorNotes(notes, individualJudges) {
         formattedHtml += '<div class="judge-notes-section">';
         individualJudges.forEach(judge => {
             const modelName = judge.model.replace('gpt-', 'GPT-').replace('-chat', '');
+            // Calculate average score for this judge
+            const judgeScores = dimensions.map(dim => judge.scores[dim.key] || 0);
+            const judgeAvg = judgeScores.reduce((a, b) => a + b, 0) / judgeScores.length;
             if (judge.scores.evaluatorNotes) {
                 formattedHtml += `
                     <div class="judge-note-item">
-                        <div class="judge-note-header">${escapeHtml(modelName)}</div>
+                        <div class="judge-note-header">
+                            ${escapeHtml(modelName)}
+                            <span class="judge-avg-score ${getScoreClass(judgeAvg)}">${judgeAvg.toFixed(1)}</span>
+                        </div>
                         <div class="judge-note-text">${formatJudgeNoteText(judge.scores.evaluatorNotes)}</div>
                     </div>
                 `;
