@@ -1120,7 +1120,7 @@ async function getModelExplanation(modelId, testCase) {
 async function evaluateWithLLM(explanation, testCase, targetAudience) {
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 45000); // 45 second timeout
+        const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 second timeout for multi-judge
         
         // Truncate explanation if too long (max 3000 chars for evaluation)
         const truncatedExplanation = explanation.length > 3000 
@@ -1149,7 +1149,11 @@ async function evaluateWithLLM(explanation, testCase, targetAudience) {
         
         clearTimeout(timeoutId);
         const result = await response.json();
-        return result.scores || getPlaceholderScores();
+        
+        // Return scores with individualJudges for detailed display
+        const scores = result.scores || getPlaceholderScores();
+        scores.individualJudges = result.individualJudges || [];
+        return scores;
     } catch (error) {
         console.error('Evaluation error:', error);
         if (error.name === 'AbortError') {
@@ -1289,9 +1293,10 @@ function renderBenchmarkResults() {
                     ${result.scores.evaluatorNotes ? `
                     <div class="evaluator-notes">
                         <div class="evaluator-notes-header">
-                            <i class="fas fa-gavel"></i> Judge's Assessment
+                            <i class="fas fa-gavel"></i> Multi-Judge Assessment
+                            ${result.scores.judgeCount ? `<span class="judge-count">(${result.scores.judgeCount} judges)</span>` : ''}
                         </div>
-                        ${formatEvaluatorNotes(result.scores.evaluatorNotes)}
+                        ${formatEvaluatorNotes(result.scores.evaluatorNotes, result.scores.individualJudges)}
                     </div>
                     ` : ''}
                 </div>
@@ -1309,75 +1314,101 @@ function getScoreClass(score) {
     return 'score-low';
 }
 
-function formatEvaluatorNotes(notes) {
-    if (!notes) return '';
+function formatJudgeNoteText(noteText) {
+    if (!noteText) return '';
     
-    // Define the dimensions to look for
-    const dimensions = [
-        { key: 'faithfulness', label: 'Faithfulness', icon: '🎯' },
-        { key: 'structure', label: 'Structure', icon: '📋' },
-        { key: 'clarity', label: 'Clarity', icon: '💡' },
-        { key: 'analysis|depth', label: 'Analysis Depth', icon: '🔍' },
-        { key: 'context', label: 'Context', icon: '🎯' },
-        { key: 'actionab', label: 'Actionability', icon: '⚡' },
-        { key: 'concise', label: 'Conciseness', icon: '✂️' }
+    // Define dimension patterns with icons
+    const dimensionPatterns = [
+        { pattern: /faithfulness/gi, icon: '🎯', label: 'Faithfulness' },
+        { pattern: /structure/gi, icon: '📋', label: 'Structure' },
+        { pattern: /clarity/gi, icon: '💡', label: 'Clarity' },
+        { pattern: /(analysis|depth)/gi, icon: '🔍', label: 'Analysis' },
+        { pattern: /(context|accuracy)/gi, icon: '🌐', label: 'Context' },
+        { pattern: /actionab/gi, icon: '⚡', label: 'Actionability' },
+        { pattern: /concise/gi, icon: '✂️', label: 'Conciseness' }
     ];
     
-    // Try to split by common patterns
-    let formattedHtml = '<div class="evaluator-notes-content">';
+    // Split into sentences
+    const sentences = noteText.split(/(?<=[.!?])\s+/);
+    let formattedItems = [];
     
-    // Split notes into sentences/segments
-    const segments = notes.split(/(?<=[.!?])\s+(?=[A-Z])/);
-    let categorizedNotes = [];
-    let uncategorized = [];
-    
-    segments.forEach(segment => {
-        segment = segment.trim();
-        if (!segment) return;
+    sentences.forEach(sentence => {
+        sentence = sentence.trim();
+        if (!sentence) return;
         
-        let matched = false;
-        for (const dim of dimensions) {
-            const regex = new RegExp(dim.key, 'i');
-            if (regex.test(segment)) {
-                categorizedNotes.push({
-                    category: dim.label,
-                    icon: dim.icon,
-                    text: segment
-                });
-                matched = true;
+        // Find which dimension this sentence relates to
+        let icon = '📝';
+        for (const dim of dimensionPatterns) {
+            if (dim.pattern.test(sentence)) {
+                icon = dim.icon;
                 break;
             }
         }
         
-        if (!matched) {
-            uncategorized.push(segment);
-        }
+        formattedItems.push(`<li><span class="note-icon">${icon}</span> ${escapeHtml(sentence)}</li>`);
     });
     
-    // Render categorized notes first
-    categorizedNotes.forEach(note => {
-        formattedHtml += `
-            <div class="note-item">
-                <span class="note-category">${note.icon} ${escapeHtml(note.category)}</span>
-                <span class="note-text">${escapeHtml(note.text)}</span>
-            </div>
-        `;
-    });
+    return `<ul class="judge-note-list">${formattedItems.join('')}</ul>`;
+}
+
+function formatEvaluatorNotes(notes, individualJudges) {
+    if (!notes) return '';
     
-    // If there are uncategorized notes, show them as summary
-    if (uncategorized.length > 0) {
-        const summaryText = uncategorized.join(' ');
-        if (summaryText.trim()) {
-            formattedHtml += `
-                <div class="note-summary">
-                    <strong>📝 Summary:</strong> ${escapeHtml(summaryText)}
-                </div>
-            `;
-        }
-    }
+    let formattedHtml = '<div class="evaluator-notes-content">';
     
-    // If nothing was categorized, just show the whole thing nicely
-    if (categorizedNotes.length === 0 && uncategorized.length === 0) {
+    // If we have individual judge data, show scores per judge
+    if (individualJudges && individualJudges.length > 0) {
+        formattedHtml += '<div class="judge-scores-breakdown">';
+        
+        const dimensions = [
+            { key: 'faithfulness', label: 'Faithfulness', short: 'Faith' },
+            { key: 'structure', label: 'Structure', short: 'Struct' },
+            { key: 'clarity', label: 'Clarity', short: 'Clarity' },
+            { key: 'analysisDepth', label: 'Analysis Depth', short: 'Depth' },
+            { key: 'contextAccuracy', label: 'Context Accuracy', short: 'Context' },
+            { key: 'actionability', label: 'Actionability', short: 'Action' },
+            { key: 'conciseness', label: 'Conciseness', short: 'Concise' }
+        ];
+        
+        // Create a table showing each judge's scores
+        formattedHtml += '<table class="judge-scores-table"><thead><tr><th>Dimension</th>';
+        individualJudges.forEach(judge => {
+            const modelName = judge.model.replace('gpt-', 'GPT-').replace('-chat', '');
+            formattedHtml += `<th>${escapeHtml(modelName)}</th>`;
+        });
+        formattedHtml += '<th>Avg</th></tr></thead><tbody>';
+        
+        dimensions.forEach(dim => {
+            formattedHtml += `<tr><td class="dim-label">${dim.label}</td>`;
+            let total = 0;
+            individualJudges.forEach(judge => {
+                const score = judge.scores[dim.key] || 0;
+                total += score;
+                formattedHtml += `<td class="${getScoreClass(score)}">${score}</td>`;
+            });
+            const avg = total / individualJudges.length;
+            formattedHtml += `<td class="avg-score ${getScoreClass(avg)}">${avg.toFixed(1)}</td></tr>`;
+        });
+        
+        formattedHtml += '</tbody></table>';
+        formattedHtml += '</div>';
+        
+        // Show each judge's notes with better formatting
+        formattedHtml += '<div class="judge-notes-section">';
+        individualJudges.forEach(judge => {
+            const modelName = judge.model.replace('gpt-', 'GPT-').replace('-chat', '');
+            if (judge.scores.evaluatorNotes) {
+                formattedHtml += `
+                    <div class="judge-note-item">
+                        <div class="judge-note-header">${escapeHtml(modelName)}</div>
+                        <div class="judge-note-text">${formatJudgeNoteText(judge.scores.evaluatorNotes)}</div>
+                    </div>
+                `;
+            }
+        });
+        formattedHtml += '</div>';
+    } else {
+        // Fallback to just showing the notes
         formattedHtml += `<div class="note-summary">${escapeHtml(notes)}</div>`;
     }
     

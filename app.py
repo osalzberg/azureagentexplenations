@@ -68,7 +68,8 @@ def get_openai_client(model_id):
     client = AzureOpenAI(
         azure_endpoint=endpoint,
         api_key=key,
-        api_version="2025-01-01-preview"
+        api_version="2025-01-01-preview",
+        timeout=60.0  # 60 second timeout
     )
     return client, deployment
 
@@ -196,7 +197,7 @@ def test_connection():
 
 @app.route("/api/benchmark/evaluate", methods=["POST"])
 def evaluate_explanation():
-    """Evaluate an explanation using LLM-as-judge."""
+    """Evaluate an explanation using multiple LLM judges."""
     try:
         data = request.get_json()
         explanation = data.get("explanation", "")
@@ -214,11 +215,10 @@ def evaluate_explanation():
             results = {**results, 'rows': results['rows'][:5]}
         results_str = json.dumps(results, default=str)[:800]
 
-        # Use GPT-4 as the judge
-        openai_client, deployment = get_openai_client("gpt-4")
-        
-        if not openai_client:
-            return jsonify({"error": "Judge model not configured"}), 500
+        # Use multiple models as judges (including O4 Mini)
+        judge_models = ["gpt-4", "gpt-5.2-chat", "gpt-4.1-nano", "o4-mini"]
+        all_judge_scores = []
+        judge_notes = []
 
         evaluation_prompt = f"""You are a STRICT and CRITICAL evaluator for Azure Log Analytics explanations.
 Your job is to find flaws and differentiate quality. Do NOT give perfect scores unless the explanation is truly exceptional.
@@ -295,65 +295,128 @@ Respond ONLY with a JSON object:
     "actionability": <score 1-5>,
     "conciseness": <score 1-5>,
     "evaluatorNotes": "<specific critique explaining low scores>"
-}}`"""
+}}"""
 
-        response = openai_client.chat.completions.create(
-            model=deployment,
-            messages=[
-                {"role": "system", "content": "You are an expert evaluator. Respond only with valid JSON."},
-                {"role": "user", "content": evaluation_prompt}
-            ],
-            max_tokens=500,
-            temperature=0.3
-        )
+        # Get evaluations from each judge model
+        for judge_model in judge_models:
+            try:
+                openai_client, deployment = get_openai_client(judge_model)
+                if not openai_client:
+                    print(f"[MULTI-JUDGE] Skipping {judge_model}: not configured")
+                    continue
 
-        response_text = response.choices[0].message.content.strip()
-        print(f"[BENCHMARK EVAL] Raw response: {response_text[:500]}")
+                print(f"[MULTI-JUDGE] Getting evaluation from {judge_model}...")
+                
+                # Handle different model API requirements
+                if judge_model.startswith("o"):
+                    # O-series models: no system message, no temperature, use max_completion_tokens
+                    combined_prompt = f"You are an expert evaluator. Respond only with valid JSON. No markdown code blocks.\n\n{evaluation_prompt}"
+                    response = openai_client.chat.completions.create(
+                        model=deployment,
+                        messages=[
+                            {"role": "user", "content": combined_prompt}
+                        ],
+                        max_completion_tokens=1000
+                    )
+                elif judge_model in ["gpt-5.2-chat"]:
+                    # GPT-5.2: uses max_completion_tokens
+                    response = openai_client.chat.completions.create(
+                        model=deployment,
+                        messages=[
+                            {"role": "system", "content": "You are an expert evaluator. Respond only with valid JSON."},
+                            {"role": "user", "content": evaluation_prompt}
+                        ],
+                        max_completion_tokens=800
+                    )
+                else:
+                    # Standard models: max_tokens + temperature
+                    response = openai_client.chat.completions.create(
+                        model=deployment,
+                        messages=[
+                            {"role": "system", "content": "You are an expert evaluator. Respond only with valid JSON."},
+                            {"role": "user", "content": evaluation_prompt}
+                        ],
+                        max_tokens=800,
+                        temperature=0.3
+                    )
+
+                response_text = response.choices[0].message.content
+                if not response_text:
+                    print(f"[MULTI-JUDGE] {judge_model} returned empty response")
+                    continue
+                    
+                response_text = response_text.strip()
+                print(f"[MULTI-JUDGE] {judge_model} raw response: {response_text[:300]}")
+                
+                # Parse JSON response
+                if response_text.startswith('```'):
+                    response_text = response_text.split('```')[1]
+                    if response_text.startswith('json'):
+                        response_text = response_text[4:]
+                
+                judge_scores = json.loads(response_text)
+                all_judge_scores.append({
+                    "model": judge_model,
+                    "scores": judge_scores
+                })
+                
+                if judge_scores.get("evaluatorNotes"):
+                    judge_notes.append(f"**{AI_MODELS[judge_model]['name']}**: {judge_scores['evaluatorNotes']}")
+                
+                print(f"[MULTI-JUDGE] {judge_model} scores parsed successfully")
+                
+            except Exception as judge_err:
+                print(f"[MULTI-JUDGE] Error from {judge_model}: {str(judge_err)}")
+                continue
+
+        # If no judges succeeded, return error
+        if not all_judge_scores:
+            return jsonify({"error": "All judge models failed"}), 500
+
+        # Average the scores across all judges
+        dimensions = ["faithfulness", "structure", "clarity", "analysisDepth", "contextAccuracy", "actionability", "conciseness"]
+        averaged_scores = {}
         
-        # Parse JSON response
-        try:
-            # Try to extract JSON from response
-            if response_text.startswith('```'):
-                response_text = response_text.split('```')[1]
-                if response_text.startswith('json'):
-                    response_text = response_text[4:]
-            scores = json.loads(response_text)
-            print(f"[BENCHMARK EVAL] Parsed scores: {scores}")
-        except json.JSONDecodeError as e:
-            print(f"[BENCHMARK EVAL] JSON parse error: {e}")
-            # Fallback to default scores if parsing fails
-            scores = {
-                "faithfulness": 3,
-                "structure": 3,
-                "clarity": 3,
-                "analysisDepth": 3,
-                "contextAccuracy": 3,
-                "actionability": 3,
-                "conciseness": 3,
-                "evaluatorNotes": "Failed to parse evaluation response"
-            }
+        for dim in dimensions:
+            dim_scores = [j["scores"].get(dim, 3) for j in all_judge_scores]
+            averaged_scores[dim] = round(sum(dim_scores) / len(dim_scores), 2)
+        
+        # Combine evaluator notes from all judges
+        averaged_scores["evaluatorNotes"] = "\n\n".join(judge_notes) if judge_notes else "No detailed notes available"
+        averaged_scores["judgeCount"] = len(all_judge_scores)
+        averaged_scores["judges"] = [j["model"] for j in all_judge_scores]
+        
+        print(f"[MULTI-JUDGE] Final averaged scores from {len(all_judge_scores)} judges: {averaged_scores}")
 
-        return jsonify({"scores": scores})
+        return jsonify({"scores": averaged_scores, "individualJudges": all_judge_scores})
 
     except Exception as e:
+        print(f"[MULTI-JUDGE] Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/explain", methods=["POST"])
 def explain_results():
     """Generate an AI explanation of query results."""
+    import time
+    start_time = time.time()
+    
     try:
         data = request.get_json()
         query = data.get("query", "")
         tables = data.get("tables", [])
         total_rows = data.get("total_rows", 0)
         model_id = data.get("model", DEFAULT_MODEL)
+        
+        print(f"[EXPLAIN] Starting explanation with model={model_id}, total_rows={total_rows}")
 
         # Get the appropriate client for the selected model
         openai_client, deployment = get_openai_client(model_id)
         
         if not openai_client:
             return jsonify({"error": f"Model '{model_id}' not configured"}), 500
+
+        print(f"[EXPLAIN] Client ready, preparing prompt... ({time.time() - start_time:.2f}s)")
 
         # Prepare a summary of results for the AI
         results_summary = []
@@ -385,21 +448,29 @@ def explain_results():
 
 Keep the explanation concise but informative. Use bullet points for clarity. If the results are empty, explain possible reasons why."""
 
+        print(f"[EXPLAIN] Prompt ready, calling API... ({time.time() - start_time:.2f}s)")
+
         # O-series models (o4-mini, o1, etc.) don't support system messages or temperature
         if model_id.startswith("o"):
             # Combine system prompt into user message for o-series models
             combined_prompt = f"""You are an expert in Azure Log Analytics, KQL (Kusto Query Language), and Azure monitoring. Provide clear, actionable explanations.
 
 {prompt}"""
-            response = openai_client.chat.completions.create(
-                model=deployment,
-                messages=[
-                    {"role": "user", "content": combined_prompt}
-                ],
-                max_completion_tokens=1000
-            )
+            try:
+                print(f"[EXPLAIN] Calling O-series model {model_id}... (this may take longer)")
+                response = openai_client.chat.completions.create(
+                    model=deployment,
+                    messages=[
+                        {"role": "user", "content": combined_prompt}
+                    ],
+                    max_completion_tokens=4000
+                )
+            except Exception as o_err:
+                print(f"[O-SERIES ERROR] {model_id}: {str(o_err)}")
+                raise
         # Use max_completion_tokens for newer chat models (gpt-5.2, etc.)
         elif model_id in ["gpt-5.2-chat"]:
+            print(f"[EXPLAIN] Calling GPT-5.2 API... ({time.time() - start_time:.2f}s)")
             response = openai_client.chat.completions.create(
                 model=deployment,
                 messages=[
@@ -409,6 +480,7 @@ Keep the explanation concise but informative. Use bullet points for clarity. If 
                 max_completion_tokens=1000
             )
         else:
+            print(f"[EXPLAIN] Calling {model_id} API... ({time.time() - start_time:.2f}s)")
             response = openai_client.chat.completions.create(
                 model=deployment,
                 messages=[
@@ -420,6 +492,8 @@ Keep the explanation concise but informative. Use bullet points for clarity. If 
             )
 
         explanation = response.choices[0].message.content
+        
+        print(f"[EXPLAIN] Complete! Total time: {time.time() - start_time:.2f}s")
 
         return jsonify({
             "success": True,
@@ -428,6 +502,7 @@ Keep the explanation concise but informative. Use bullet points for clarity. If 
         })
 
     except Exception as e:
+        print(f"[EXPLAIN] Error after {time.time() - start_time:.2f}s: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 
