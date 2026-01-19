@@ -203,6 +203,17 @@ def evaluate_explanation():
         test_case = data.get("testCase", {})
         target_audience = data.get("targetAudience", "developer")
 
+        # Truncate explanation to prevent huge payloads
+        max_explanation_len = 3000
+        if len(explanation) > max_explanation_len:
+            explanation = explanation[:max_explanation_len] + "... [truncated]"
+        
+        # Limit result data size
+        results = test_case.get('results', {})
+        if 'rows' in results and len(results['rows']) > 5:
+            results = {**results, 'rows': results['rows'][:5]}
+        results_str = json.dumps(results, default=str)[:800]
+
         # Use GPT-4 as the judge
         openai_client, deployment = get_openai_client("gpt-4")
         
@@ -215,8 +226,8 @@ Most explanations should score between 2-4, with 5 reserved for exceptional work
 
 ## Context
 - Target Audience: {target_audience}
-- KQL Query: {test_case.get('query', 'N/A')}
-- Result Data: {json.dumps(test_case.get('results', {}), default=str)[:1000]}
+- KQL Query: {test_case.get('query', 'N/A')[:500]}
+- Result Data: {results_str}
 
 ## Explanation to Evaluate:
 {explanation}
@@ -374,8 +385,21 @@ def explain_results():
 
 Keep the explanation concise but informative. Use bullet points for clarity. If the results are empty, explain possible reasons why."""
 
-        # Use max_completion_tokens for newer models (o4-mini, gpt-5.2, etc.)
-        if model_id in ["o4-mini", "gpt-5.2-chat"]:
+        # O-series models (o4-mini, o1, etc.) don't support system messages or temperature
+        if model_id.startswith("o"):
+            # Combine system prompt into user message for o-series models
+            combined_prompt = f"""You are an expert in Azure Log Analytics, KQL (Kusto Query Language), and Azure monitoring. Provide clear, actionable explanations.
+
+{prompt}"""
+            response = openai_client.chat.completions.create(
+                model=deployment,
+                messages=[
+                    {"role": "user", "content": combined_prompt}
+                ],
+                max_completion_tokens=1000
+            )
+        # Use max_completion_tokens for newer chat models (gpt-5.2, etc.)
+        elif model_id in ["gpt-5.2-chat"]:
             response = openai_client.chat.completions.create(
                 model=deployment,
                 messages=[

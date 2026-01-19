@@ -1000,8 +1000,9 @@ async function runBenchmark() {
     const evaluationMethod = document.getElementById('evaluation-method').value;
     const targetAudience = document.getElementById('target-audience').value;
 
-    // Create test case from current results
+    // Create test case from current results (limit to 10 rows to prevent timeouts)
     const table = currentResults.tables[0];
+    const maxRows = 10;
     const testCase = {
         id: 'current',
         name: 'Current Query',
@@ -1010,11 +1011,15 @@ async function runBenchmark() {
         query: currentQuery,
         results: {
             columns: table.columns.map(c => c.name || c),
-            rows: table.rows.slice(0, 20)
+            rows: table.rows.slice(0, maxRows)
         },
         expectedInsights: [],
         criticalErrors: []
     };
+
+    if (table.rows.length > maxRows) {
+        showToast(`Using first ${maxRows} of ${table.rows.length} rows for benchmark`, 'info');
+    }
 
     // Show progress
     const resultsSection = document.getElementById('benchmark-results-section');
@@ -1081,6 +1086,9 @@ async function runBenchmark() {
 
 async function getModelExplanation(modelId, testCase) {
     try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+        
         const response = await fetch('/api/explain', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1089,37 +1097,64 @@ async function getModelExplanation(modelId, testCase) {
                 tables: [{
                     name: 'Result',
                     columns: testCase.results.columns,
-                    rows: testCase.results.rows,
+                    rows: testCase.results.rows.slice(0, 10), // Limit rows
                     row_count: testCase.results.rows.length
                 }],
                 total_rows: testCase.results.rows.length,
                 model: modelId
-            })
+            }),
+            signal: controller.signal
         });
-
+        
+        clearTimeout(timeoutId);
         const result = await response.json();
         return result.explanation || 'Error generating explanation';
     } catch (error) {
+        if (error.name === 'AbortError') {
+            return 'Error: Request timed out after 60 seconds';
+        }
         return 'Error: ' + error.message;
     }
 }
 
 async function evaluateWithLLM(explanation, testCase, targetAudience) {
     try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 45000); // 45 second timeout
+        
+        // Truncate explanation if too long (max 3000 chars for evaluation)
+        const truncatedExplanation = explanation.length > 3000 
+            ? explanation.substring(0, 3000) + '... [truncated]'
+            : explanation;
+        
+        // Limit test case data for evaluation
+        const limitedTestCase = {
+            ...testCase,
+            results: {
+                columns: testCase.results.columns,
+                rows: testCase.results.rows.slice(0, 5) // Only 5 rows for judge
+            }
+        };
+        
         const response = await fetch('/api/benchmark/evaluate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                explanation,
-                testCase,
+                explanation: truncatedExplanation,
+                testCase: limitedTestCase,
                 targetAudience
-            })
+            }),
+            signal: controller.signal
         });
-
+        
+        clearTimeout(timeoutId);
         const result = await response.json();
         return result.scores || getPlaceholderScores();
     } catch (error) {
         console.error('Evaluation error:', error);
+        if (error.name === 'AbortError') {
+            console.error('Evaluation timed out');
+        }
         return getPlaceholderScores();
     }
 }
@@ -1227,6 +1262,10 @@ function renderBenchmarkResults() {
                             <div class="mini-score-label">Faith</div>
                         </div>
                         <div class="mini-score">
+                            <div class="mini-score-value ${getScoreClass(result.scores.structure)}">${(result.scores.structure || 0).toFixed(1)}</div>
+                            <div class="mini-score-label">Struct</div>
+                        </div>
+                        <div class="mini-score">
                             <div class="mini-score-value ${getScoreClass(result.scores.clarity)}">${(result.scores.clarity || 0).toFixed(1)}</div>
                             <div class="mini-score-label">Clarity</div>
                         </div>
@@ -1238,7 +1277,23 @@ function renderBenchmarkResults() {
                             <div class="mini-score-value ${getScoreClass(result.scores.contextAccuracy)}">${(result.scores.contextAccuracy || 0).toFixed(1)}</div>
                             <div class="mini-score-label">Context</div>
                         </div>
+                        <div class="mini-score">
+                            <div class="mini-score-value ${getScoreClass(result.scores.actionability)}">${(result.scores.actionability || 0).toFixed(1)}</div>
+                            <div class="mini-score-label">Action</div>
+                        </div>
+                        <div class="mini-score">
+                            <div class="mini-score-value ${getScoreClass(result.scores.conciseness)}">${(result.scores.conciseness || 0).toFixed(1)}</div>
+                            <div class="mini-score-label">Concise</div>
+                        </div>
                     </div>
+                    ${result.scores.evaluatorNotes ? `
+                    <div class="evaluator-notes">
+                        <div class="evaluator-notes-header">
+                            <i class="fas fa-gavel"></i> Judge's Assessment
+                        </div>
+                        ${formatEvaluatorNotes(result.scores.evaluatorNotes)}
+                    </div>
+                    ` : ''}
                 </div>
             `).join('')}
         </div>
@@ -1252,6 +1307,82 @@ function getScoreClass(score) {
     if (score >= 4) return 'score-high';
     if (score >= 3) return 'score-medium';
     return 'score-low';
+}
+
+function formatEvaluatorNotes(notes) {
+    if (!notes) return '';
+    
+    // Define the dimensions to look for
+    const dimensions = [
+        { key: 'faithfulness', label: 'Faithfulness', icon: '🎯' },
+        { key: 'structure', label: 'Structure', icon: '📋' },
+        { key: 'clarity', label: 'Clarity', icon: '💡' },
+        { key: 'analysis|depth', label: 'Analysis Depth', icon: '🔍' },
+        { key: 'context', label: 'Context', icon: '🎯' },
+        { key: 'actionab', label: 'Actionability', icon: '⚡' },
+        { key: 'concise', label: 'Conciseness', icon: '✂️' }
+    ];
+    
+    // Try to split by common patterns
+    let formattedHtml = '<div class="evaluator-notes-content">';
+    
+    // Split notes into sentences/segments
+    const segments = notes.split(/(?<=[.!?])\s+(?=[A-Z])/);
+    let categorizedNotes = [];
+    let uncategorized = [];
+    
+    segments.forEach(segment => {
+        segment = segment.trim();
+        if (!segment) return;
+        
+        let matched = false;
+        for (const dim of dimensions) {
+            const regex = new RegExp(dim.key, 'i');
+            if (regex.test(segment)) {
+                categorizedNotes.push({
+                    category: dim.label,
+                    icon: dim.icon,
+                    text: segment
+                });
+                matched = true;
+                break;
+            }
+        }
+        
+        if (!matched) {
+            uncategorized.push(segment);
+        }
+    });
+    
+    // Render categorized notes first
+    categorizedNotes.forEach(note => {
+        formattedHtml += `
+            <div class="note-item">
+                <span class="note-category">${note.icon} ${escapeHtml(note.category)}</span>
+                <span class="note-text">${escapeHtml(note.text)}</span>
+            </div>
+        `;
+    });
+    
+    // If there are uncategorized notes, show them as summary
+    if (uncategorized.length > 0) {
+        const summaryText = uncategorized.join(' ');
+        if (summaryText.trim()) {
+            formattedHtml += `
+                <div class="note-summary">
+                    <strong>📝 Summary:</strong> ${escapeHtml(summaryText)}
+                </div>
+            `;
+        }
+    }
+    
+    // If nothing was categorized, just show the whole thing nicely
+    if (categorizedNotes.length === 0 && uncategorized.length === 0) {
+        formattedHtml += `<div class="note-summary">${escapeHtml(notes)}</div>`;
+    }
+    
+    formattedHtml += '</div>';
+    return formattedHtml;
 }
 
 function renderBenchmarkChart() {
