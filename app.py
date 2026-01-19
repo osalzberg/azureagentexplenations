@@ -7,6 +7,7 @@ Azure Log Analytics workspaces using Azure credentials.
 
 import os
 import json
+import time
 from datetime import timedelta
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
@@ -307,42 +308,52 @@ Respond ONLY with a JSON object:
 
                 print(f"[MULTI-JUDGE] Getting evaluation from {judge_model}...")
                 
-                # Handle different model API requirements
-                if judge_model.startswith("o"):
-                    # O-series models: no system message, no temperature, use max_completion_tokens
-                    combined_prompt = f"You are an expert evaluator. Respond only with valid JSON. No markdown code blocks.\n\n{evaluation_prompt}"
-                    response = openai_client.chat.completions.create(
-                        model=deployment,
-                        messages=[
-                            {"role": "user", "content": combined_prompt}
-                        ],
-                        max_completion_tokens=1000
-                    )
-                elif judge_model in ["gpt-5.2-chat"]:
-                    # GPT-5.2: uses max_completion_tokens
-                    response = openai_client.chat.completions.create(
-                        model=deployment,
-                        messages=[
-                            {"role": "system", "content": "You are an expert evaluator. Respond only with valid JSON."},
-                            {"role": "user", "content": evaluation_prompt}
-                        ],
-                        max_completion_tokens=800
-                    )
-                else:
-                    # Standard models: max_tokens + temperature
-                    response = openai_client.chat.completions.create(
-                        model=deployment,
-                        messages=[
-                            {"role": "system", "content": "You are an expert evaluator. Respond only with valid JSON."},
-                            {"role": "user", "content": evaluation_prompt}
-                        ],
-                        max_tokens=800,
-                        temperature=0.3
-                    )
+                # Retry logic for empty responses
+                max_retries = 3
+                response_text = None
+                
+                for attempt in range(max_retries):
+                    # Handle different model API requirements
+                    if judge_model.startswith("o"):
+                        # O-series models: no system message, no temperature, use max_completion_tokens
+                        combined_prompt = f"You are an expert evaluator. Respond only with valid JSON. No markdown code blocks.\n\n{evaluation_prompt}"
+                        response = openai_client.chat.completions.create(
+                            model=deployment,
+                            messages=[
+                                {"role": "user", "content": combined_prompt}
+                            ],
+                            max_completion_tokens=1500
+                        )
+                    elif judge_model in ["gpt-5.2-chat"]:
+                        # GPT-5.2: uses max_completion_tokens
+                        response = openai_client.chat.completions.create(
+                            model=deployment,
+                            messages=[
+                                {"role": "system", "content": "You are an expert evaluator. Respond only with valid JSON."},
+                                {"role": "user", "content": evaluation_prompt}
+                            ],
+                            max_completion_tokens=800
+                        )
+                    else:
+                        # Standard models: max_tokens + temperature
+                        response = openai_client.chat.completions.create(
+                            model=deployment,
+                            messages=[
+                                {"role": "system", "content": "You are an expert evaluator. Respond only with valid JSON."},
+                                {"role": "user", "content": evaluation_prompt}
+                            ],
+                            max_tokens=800,
+                            temperature=0.3
+                        )
 
-                response_text = response.choices[0].message.content
+                    response_text = response.choices[0].message.content
+                    if response_text:
+                        break
+                    print(f"[MULTI-JUDGE] {judge_model} returned empty response (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(1)  # Brief pause before retry
+                
                 if not response_text:
-                    print(f"[MULTI-JUDGE] {judge_model} returned empty response")
+                    print(f"[MULTI-JUDGE] {judge_model} failed after {max_retries} retries")
                     continue
                     
                 response_text = response_text.strip()
