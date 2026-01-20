@@ -2101,6 +2101,7 @@ body {
 
 .leaderboard-table td {
     font-size: 13px;
+    color: var(--text-primary);
 }
 
 .leaderboard-table tbody tr:hover {
@@ -2108,30 +2109,41 @@ body {
 }
 
 .leaderboard-table .rank-1 {
-    background: rgba(166, 227, 161, 0.1);
+    background: rgba(166, 227, 161, 0.15);
 }
 
 .leaderboard-table .rank-1 td:first-child {
-    color: var(--accent-green);
+    color: #a6e3a1;
     font-weight: 700;
 }
 
+.leaderboard-table .rank-2 {
+    background: rgba(137, 180, 250, 0.1);
+}
+
 .leaderboard-table .rank-2 td:first-child {
-    color: var(--accent-blue);
+    color: #89b4fa;
+    font-weight: 600;
+}
+
+.leaderboard-table .rank-3 {
+    background: rgba(249, 226, 175, 0.1);
 }
 
 .leaderboard-table .rank-3 td:first-child {
-    color: var(--accent-yellow);
+    color: #f9e2af;
+    font-weight: 600;
 }
 
 .leaderboard-table .model-name {
     text-align: left;
     font-weight: 500;
+    color: var(--text-primary);
 }
 
 .leaderboard-table .weighted-score {
     font-weight: 700;
-    color: var(--accent-purple);
+    color: #cba6f7;
 }
 
 /* Per-Query Results */

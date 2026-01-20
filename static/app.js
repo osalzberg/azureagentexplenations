@@ -2232,11 +2232,16 @@ window.switchTab = function(tabId) {
                      tabId === 'bulk-benchmark' ? 'bulk-benchmark-content' : null;
     
     if (contentId) {
-        document.getElementById(contentId).style.display = 'block';
+        document.getElementById(contentId).style.display = 'flex';
     }
     
     // Update active tab
     document.querySelector(`.nav-tab[data-tab="${tabId}"]`)?.classList.add('active');
+    
+    // Update query preview for Comparison tab
+    if (tabId === 'benchmark') {
+        updateBenchmarkQueryPreview();
+    }
     
     // Populate models for bulk benchmark
     if (tabId === 'bulk-benchmark') {
