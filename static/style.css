@@ -1225,6 +1225,14 @@ body {
     padding: 20px;
     height: 350px;
     margin-bottom: 20px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.benchmark-chart-container canvas {
+    max-width: 400px;
+    max-height: 100%;
 }
 
 .benchmark-results-table {
@@ -1961,6 +1969,77 @@ body {
     color: var(--text-muted);
 }
 
+/* Excel Upload Section */
+.excel-upload-section {
+    margin-bottom: 20px;
+}
+
+.upload-dropzone {
+    border: 2px dashed var(--border-color);
+    border-radius: var(--radius);
+    padding: 30px;
+    text-align: center;
+    cursor: pointer;
+    transition: all var(--transition);
+    background: var(--bg-tertiary);
+}
+
+.upload-dropzone:hover {
+    border-color: var(--accent-green);
+    background: rgba(166, 227, 161, 0.05);
+}
+
+.upload-dropzone.drag-over {
+    border-color: var(--accent-green);
+    background: rgba(166, 227, 161, 0.1);
+}
+
+.upload-dropzone i {
+    font-size: 40px;
+    color: var(--accent-green);
+    margin-bottom: 15px;
+}
+
+.upload-dropzone p {
+    margin: 0;
+    color: var(--text-secondary);
+}
+
+.upload-dropzone p strong {
+    color: var(--text-primary);
+}
+
+.upload-dropzone .upload-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 8px;
+}
+
+.upload-result {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 15px 20px;
+    background: rgba(166, 227, 161, 0.1);
+    border: 1px solid var(--accent-green);
+    border-radius: var(--radius);
+}
+
+.upload-result i {
+    color: var(--accent-green);
+    font-size: 20px;
+}
+
+.upload-result span {
+    flex: 1;
+    color: var(--text-primary);
+}
+
+.query-actions-header {
+    display: flex;
+    gap: 10px;
+}
+
 /* Winner Card */
 .bulk-winner-card {
     background: linear-gradient(135deg, rgba(166, 227, 161, 0.1), rgba(137, 180, 250, 0.1));
@@ -2242,4 +2321,228 @@ body {
 .btn-small {
     padding: 6px 12px;
     font-size: 12px;
+}
+
+/* Normalization Explanation */
+.normalization-explanation {
+    margin: 20px 0;
+    padding: 20px;
+    background: linear-gradient(135deg, rgba(137, 180, 250, 0.1) 0%, rgba(203, 166, 247, 0.1) 100%);
+    border-radius: 12px;
+    border: 2px solid rgba(137, 180, 250, 0.3);
+}
+
+.normalization-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+    color: var(--accent-blue);
+    font-size: 14px;
+}
+
+.normalization-header i {
+    font-size: 18px;
+}
+
+.normalization-content {
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.normalization-content p {
+    margin-bottom: 12px;
+}
+
+.normalization-content strong {
+    color: var(--text-primary);
+}
+
+.bias-explanation {
+    margin: 15px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.bias-item {
+    display: flex;
+    gap: 12px;
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    border-left: 3px solid var(--accent-purple);
+}
+
+.bias-icon {
+    font-size: 24px;
+    flex-shrink: 0;
+}
+
+.bias-text {
+    flex: 1;
+}
+
+.bias-text strong {
+    display: block;
+    color: var(--accent-purple);
+    margin-bottom: 4px;
+}
+
+.normalization-note {
+    margin-top: 15px;
+    padding: 12px;
+    background: rgba(249, 226, 175, 0.1);
+    border-radius: 8px;
+    border-left: 3px solid var(--accent-yellow);
+    font-size: 13px;
+}
+
+.normalization-note i {
+    color: var(--accent-yellow);
+    margin-right: 8px;
+}
+
+.normalization-note strong {
+    color: var(--accent-yellow);
+}
+
+.normalization-note em {
+    color: var(--accent-blue);
+    font-style: italic;
+}
+/* Scoring Weights Explanation */
+.scoring-weights-explanation {
+    margin: 20px 0;
+    background: linear-gradient(135deg, rgba(166, 227, 161, 0.1) 0%, rgba(137, 180, 250, 0.1) 100%);
+    border-radius: 12px;
+    border: 2px solid rgba(166, 227, 161, 0.3);
+    overflow: hidden;
+}
+
+.weights-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 15px 20px;
+    color: var(--accent-green);
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.weights-header:hover {
+    background: rgba(166, 227, 161, 0.1);
+}
+
+.weights-header i:first-child {
+    font-size: 18px;
+}
+
+.weights-toggle-icon {
+    margin-left: auto;
+    transition: transform 0.3s ease;
+}
+
+.weights-toggle-icon.rotated {
+    transform: rotate(180deg);
+}
+
+.weights-content {
+    max-height: 600px;
+    overflow: hidden;
+    padding: 0 20px 20px 20px;
+    transition: all 0.3s ease;
+}
+
+.weights-content.collapsed {
+    max-height: 0;
+    padding: 0 20px;
+}
+
+.weights-content p {
+    color: var(--text-secondary);
+    margin-bottom: 15px;
+    line-height: 1.6;
+}
+
+.weights-content strong {
+    color: var(--text-primary);
+}
+
+.weights-table {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 15px 0;
+}
+
+.weight-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
+}
+
+.weight-dim {
+    width: 130px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.weight-bar {
+    height: 8px;
+    border-radius: 4px;
+    flex: 1;
+    max-width: 200px;
+}
+
+.weight-high .weight-bar {
+    background: linear-gradient(90deg, var(--accent-green) 0%, var(--accent-blue) 100%);
+}
+
+.weight-high .weight-dim {
+    color: var(--accent-green);
+    font-weight: 600;
+}
+
+.weight-medium .weight-bar {
+    background: linear-gradient(90deg, var(--accent-blue) 0%, var(--accent-purple) 100%);
+}
+
+.weight-medium .weight-dim {
+    color: var(--accent-blue);
+    font-weight: 500;
+}
+
+.weight-low .weight-bar {
+    background: linear-gradient(90deg, var(--accent-purple) 0%, var(--text-muted) 100%);
+}
+
+.weight-value {
+    width: 50px;
+    text-align: right;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.weights-note {
+    margin-top: 15px;
+    padding: 12px;
+    background: rgba(166, 227, 161, 0.1);
+    border-radius: 8px;
+    border-left: 3px solid var(--accent-green);
+    font-size: 13px;
+}
+
+.weights-note i {
+    color: var(--accent-yellow);
+    margin-right: 8px;
+}
+
+.weights-note strong {
+    color: var(--accent-green);
 }

@@ -441,10 +441,30 @@ Heartbeat
             <div class="benchmark-section">
                 <div class="section-header">
                     <h3><i class="fas fa-list"></i> Queries to Benchmark</h3>
-                    <button class="btn btn-secondary btn-small" id="add-benchmark-query">
-                        <i class="fas fa-plus"></i> Add Query
-                    </button>
+                    <div class="query-actions-header">
+                        <button class="btn btn-secondary btn-small" id="add-benchmark-query">
+                            <i class="fas fa-plus"></i> Add Query
+                        </button>
+                    </div>
                 </div>
+                
+                <!-- Excel Upload -->
+                <div class="excel-upload-section">
+                    <div class="upload-dropzone" id="excel-dropzone">
+                        <i class="fas fa-file-excel"></i>
+                        <p><strong>Drop Excel file here</strong> or click to browse</p>
+                        <p class="upload-hint">Excel should have columns: Query (required), Name (optional)</p>
+                        <input type="file" id="excel-file-input" accept=".xlsx,.xls" style="display: none;">
+                    </div>
+                    <div class="upload-result" id="upload-result" style="display: none;">
+                        <i class="fas fa-check-circle"></i>
+                        <span id="upload-result-text"></span>
+                        <button class="btn btn-icon btn-small" id="clear-uploaded" title="Clear">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                
                 <div id="bulk-query-list" class="bulk-query-list">
                     <!-- Query items will be added here -->
                 </div>
@@ -477,6 +497,9 @@ Heartbeat
                 <div class="section-header">
                     <h3><i class="fas fa-trophy"></i> Benchmark Results</h3>
                     <div class="results-actions">
+                        <button id="export-bulk-excel" class="btn btn-icon" title="Export Excel">
+                            <i class="fas fa-file-excel"></i>
+                        </button>
                         <button id="export-bulk-json" class="btn btn-icon" title="Export JSON">
                             <i class="fas fa-file-code"></i>
                         </button>
@@ -489,6 +512,62 @@ Heartbeat
                 <!-- Overall Winner -->
                 <div class="bulk-winner-card" id="bulk-winner-card">
                     <!-- Populated by JavaScript -->
+                </div>
+
+                <!-- Weighted Total Explanation -->
+                <div class="scoring-weights-explanation">
+                    <div class="weights-header" onclick="toggleWeightsExplanation()">
+                        <i class="fas fa-balance-scale"></i>
+                        <strong>How is the Weighted Total calculated?</strong>
+                        <i class="fas fa-chevron-down weights-toggle-icon" id="weights-toggle-icon"></i>
+                    </div>
+                    <div class="weights-content" id="weights-content">
+                        <p>The <strong>Weighted Total</strong> is not a simple average. Each dimension has a different weight based on its importance for evaluating KQL explanations:</p>
+                        
+                        <div class="weights-table">
+                            <div class="weight-row weight-high">
+                                <span class="weight-dim">Faithfulness</span>
+                                <span class="weight-bar" style="width: 100%"></span>
+                                <span class="weight-value">25%</span>
+                            </div>
+                            <div class="weight-row weight-high">
+                                <span class="weight-dim">Analysis Depth</span>
+                                <span class="weight-bar" style="width: 80%"></span>
+                                <span class="weight-value">20%</span>
+                            </div>
+                            <div class="weight-row weight-medium">
+                                <span class="weight-dim">Clarity</span>
+                                <span class="weight-bar" style="width: 60%"></span>
+                                <span class="weight-value">15%</span>
+                            </div>
+                            <div class="weight-row weight-medium">
+                                <span class="weight-dim">Context Accuracy</span>
+                                <span class="weight-bar" style="width: 60%"></span>
+                                <span class="weight-value">15%</span>
+                            </div>
+                            <div class="weight-row weight-low">
+                                <span class="weight-dim">Structure</span>
+                                <span class="weight-bar" style="width: 40%"></span>
+                                <span class="weight-value">10%</span>
+                            </div>
+                            <div class="weight-row weight-low">
+                                <span class="weight-dim">Actionability</span>
+                                <span class="weight-bar" style="width: 40%"></span>
+                                <span class="weight-value">10%</span>
+                            </div>
+                            <div class="weight-row weight-low">
+                                <span class="weight-dim">Conciseness</span>
+                                <span class="weight-bar" style="width: 20%"></span>
+                                <span class="weight-value">5%</span>
+                            </div>
+                        </div>
+                        
+                        <p class="weights-note">
+                            <i class="fas fa-lightbulb"></i>
+                            <strong>Key insight:</strong> Faithfulness and Analysis Depth together account for <strong>45%</strong> of the total score. 
+                            A model that excels at accurate, in-depth analysis will rank higher even if other scores are slightly lower.
+                        </p>
+                    </div>
                 </div>
 
                 <!-- Aggregated Scores Chart -->

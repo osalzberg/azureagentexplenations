@@ -53,6 +53,143 @@ AI_MODELS = {
 
 DEFAULT_MODEL = "gpt-4"
 
+# Audience-specific weight configurations
+AUDIENCE_WEIGHTS = {
+    "developer": {
+        "faithfulness": 0.25,
+        "structure": 0.10,
+        "clarity": 0.15,
+        "analysisDepth": 0.20,
+        "contextAccuracy": 0.15,
+        "actionability": 0.10,
+        "conciseness": 0.05
+    },
+    "sre": {
+        "faithfulness": 0.25,
+        "structure": 0.08,
+        "clarity": 0.12,
+        "analysisDepth": 0.15,
+        "contextAccuracy": 0.12,
+        "actionability": 0.20,  # Higher for SRE - need actionable steps
+        "conciseness": 0.08
+    },
+    "analyst": {
+        "faithfulness": 0.30,  # Critical for analysts
+        "structure": 0.12,
+        "clarity": 0.18,
+        "analysisDepth": 0.25,  # Deep analysis important
+        "contextAccuracy": 0.10,
+        "actionability": 0.05,
+        "conciseness": 0.00
+    },
+    "executive": {
+        "faithfulness": 0.20,
+        "structure": 0.15,  # Clear structure important
+        "clarity": 0.25,    # Crystal clear for executives
+        "analysisDepth": 0.15,
+        "contextAccuracy": 0.05,
+        "actionability": 0.15,
+        "conciseness": 0.05
+    }
+}
+
+def get_calibration_examples(audience):
+    """Get audience-specific calibration examples for scoring."""
+    examples = {
+        "developer": """
+**Example of Score 5 (Faithfulness):** "The query returned 247 failed requests with ResultCode 500, representing 12% of total requests. The top affected endpoint is /api/users with 89 failures."
+
+**Example of Score 3 (Faithfulness):** "The query shows several failed requests. This might indicate a server issue that should be investigated."
+
+**Example of Score 1 (Faithfulness):** "The high failure rate of 45% (note: actual data shows 12%) is likely caused by database connection issues (no database mentioned in query)."
+""",
+        "sre": """
+**Example of Score 5 (Actionability):** "1. Check application logs for endpoint /api/users between 14:00-15:00 UTC. 2. Review recent deployments in that timeframe. 3. Examine database query performance for user lookup operations."
+
+**Example of Score 3 (Actionability):** "You should investigate the failed requests and check if there are any patterns."
+
+**Example of Score 1 (Actionability):** "The system seems to have some issues."
+""",
+        "analyst": """
+**Example of Score 5 (Analysis Depth):** "The temporal pattern shows failures spiking at 14:23 UTC (89 failures in 5 minutes), then declining. This correlates with increased traffic from region West-US-2, suggesting a regional load issue rather than code defect."
+
+**Example of Score 3 (Analysis Depth):** "There are 247 failures shown in the data, with most happening in the afternoon hours."
+
+**Example of Score 1 (Analysis Depth):** "The query shows: 247 rows of failed requests."
+""",
+        "executive": """
+**Example of Score 5 (Clarity):** "**Status:** Service degradation detected. **Impact:** 12% of user requests failed today. **Root Cause:** API endpoint overload. **Timeline:** Issue started 2:23 PM, resolved by 3:15 PM."
+
+**Example of Score 3 (Clarity):** "The KQL query filtered Requests table for Success==false and got 247 results with various ResultCodes."
+
+**Example of Score 1 (Clarity):** "By using the where clause to filter on the Success boolean and then aggregating with summarize by ResultCode, we can see the distribution of HTTP status codes..."
+"""
+    }
+    return examples.get(audience, examples["developer"])
+
+def normalize_judge_scores(all_judge_scores, dimensions):
+    """
+    Normalize scores across judges to account for bias.
+    Uses z-score normalization per judge, then rescales to 1-5 range.
+    """
+    if len(all_judge_scores) < 2:
+        return None  # Need at least 2 judges for normalization
+    
+    try:
+        import statistics
+        
+        # Calculate each judge's mean and std across all dimensions
+        judge_stats = {}
+        for judge_data in all_judge_scores:
+            model = judge_data["model"]
+            scores = [judge_data["scores"].get(dim, 3) for dim in dimensions]
+            judge_stats[model] = {
+                "mean": statistics.mean(scores),
+                "std": statistics.stdev(scores) if len(scores) > 1 and statistics.stdev(scores) > 0 else 1.0
+            }
+        
+        # Normalize each judge's scores (z-score)
+        normalized_by_judge = {}
+        for judge_data in all_judge_scores:
+            model = judge_data["model"]
+            stats = judge_stats[model]
+            normalized_by_judge[model] = {}
+            
+            for dim in dimensions:
+                raw_score = judge_data["scores"].get(dim, 3)
+                # Z-score: (x - mean) / std
+                z_score = (raw_score - stats["mean"]) / stats["std"]
+                normalized_by_judge[model][dim] = z_score
+        
+        # Calculate global mean and std across all normalized scores
+        all_normalized_scores = []
+        for dim in dimensions:
+            for model in normalized_by_judge:
+                all_normalized_scores.append(normalized_by_judge[model][dim])
+        
+        global_mean = statistics.mean(all_normalized_scores)
+        global_std = statistics.stdev(all_normalized_scores) if len(all_normalized_scores) > 1 else 1.0
+        
+        # Rescale to 1-5 range and average across judges
+        final_scores = {}
+        for dim in dimensions:
+            dim_scores = []
+            for model in normalized_by_judge:
+                z_score = normalized_by_judge[model][dim]
+                # Rescale: mean=3, std≈1 in 1-5 range
+                rescaled = 3 + z_score
+                # Clamp to 1-5 range
+                rescaled = max(1, min(5, rescaled))
+                dim_scores.append(rescaled)
+            
+            final_scores[dim] = sum(dim_scores) / len(dim_scores)
+        
+        return final_scores
+    
+    except Exception as e:
+        print(f"[NORMALIZE] Error normalizing scores: {e}")
+        return None  # Fall back to raw averaging
+
 def get_openai_client(model_id):
     """Get an OpenAI client for the specified model."""
     model_config = AI_MODELS.get(model_id)
@@ -205,25 +342,26 @@ def evaluate_explanation():
         test_case = data.get("testCase", {})
         target_audience = data.get("targetAudience", "developer")
 
-        # Truncate explanation to prevent huge payloads
-        max_explanation_len = 3000
+        # Truncate explanation to prevent huge payloads (increased from 3000)
+        max_explanation_len = 5000
         if len(explanation) > max_explanation_len:
             explanation = explanation[:max_explanation_len] + "... [truncated]"
         
-        # Limit result data size
+        # Limit result data size (increased from 5 to 10 rows)
         results = test_case.get('results', {})
-        if 'rows' in results and len(results['rows']) > 5:
-            results = {**results, 'rows': results['rows'][:5]}
-        results_str = json.dumps(results, default=str)[:800]
+        if 'rows' in results and len(results['rows']) > 10:
+            results = {**results, 'rows': results['rows'][:10]}
+        results_str = json.dumps(results, default=str)[:1200]
 
         # Use multiple models as judges (including O4 Mini)
         judge_models = ["gpt-4", "gpt-5.2-chat", "gpt-4.1-nano", "o4-mini"]
         all_judge_scores = []
         judge_notes = []
 
-        evaluation_prompt = f"""You are a STRICT and CRITICAL evaluator for Azure Log Analytics explanations.
-Your job is to find flaws and differentiate quality. Do NOT give perfect scores unless the explanation is truly exceptional.
-Most explanations should score between 2-4, with 5 reserved for exceptional work and 1-2 for poor work.
+        # Get audience-specific examples for calibration
+        audience_examples = get_calibration_examples(target_audience)
+        
+        evaluation_prompt = f"""You are an expert evaluator for Azure Log Analytics explanations. Your goal is to provide accurate, calibrated scores that differentiate quality.
 
 ## Context
 - Target Audience: {target_audience}
@@ -233,60 +371,68 @@ Most explanations should score between 2-4, with 5 reserved for exceptional work
 ## Explanation to Evaluate:
 {explanation}
 
-## Scoring Rubric (1-5 scale) - BE CRITICAL:
+## Calibration Examples:
+{audience_examples}
 
-1. **Faithfulness** (No hallucinations - CRITICAL)
-   - 5: ONLY if every single claim is directly supported by the data shown
-   - 4: Very accurate with only trivial inferences
-   - 3: Mostly accurate, some unsupported but reasonable inferences
-   - 2: Contains some claims not supported by data
-   - 1: Contains hallucinated metrics, causes, or false claims
+## Scoring Rubric (1-5 scale):
 
-2. **Structure** (Organization)
-   - 5: Perfect structure with clear headings, logical flow, scannable
-   - 4: Well organized with minor improvements possible
-   - 3: Has some structure but could be clearer
-   - 2: Poorly organized, hard to follow
-   - 1: Wall of text, no organization
+**Use the full scale:**
+- 5 = Exceptional, exemplary work
+- 4 = Good, above average with minor issues
+- 3 = Adequate, meets basic requirements
+- 2 = Below average, significant issues
+- 1 = Poor, fails to meet requirements
 
-3. **Clarity** (Understandable to {target_audience})
-   - 5: Crystal clear, perfectly matched to audience level
-   - 4: Clear with minor jargon issues
-   - 3: Understandable but assumes some knowledge
-   - 2: Contains unexplained technical terms
-   - 1: Confusing, wrong audience level
+### 1. Faithfulness (No Hallucinations - CRITICAL)
+- 5: Every claim directly verifiable from the data, no unsupported inferences
+- 4: Very accurate, only trivial reasonable inferences
+- 3: Mostly accurate, some minor unsupported but plausible claims
+- 2: Contains several claims not supported by visible data
+- 1: Significant hallucinations, false metrics, or fabricated insights
 
-4. **Analysis Depth** (Insights beyond restating numbers)
-   - 5: Provides genuine insights about patterns, anomalies, implications
-   - 4: Good analysis with some insights
-   - 3: Basic analysis, mostly restates data with some interpretation
-   - 2: Minimal analysis, mostly describes what's shown
-   - 1: Just restates the numbers with no insight
+### 2. Structure (Organization)
+- 5: Excellent structure with clear sections, logical flow, highly scannable
+- 4: Well organized with good headings and structure
+- 3: Basic structure present, could be clearer
+- 2: Poor organization, difficult to follow
+- 1: No structure, wall of text
 
-5. **Context Accuracy** (Azure/Log Analytics knowledge)
-   - 5: Demonstrates expert Azure knowledge, correct terminology
-   - 4: Solid Azure understanding
-   - 3: Basic but correct Azure interpretation
-   - 2: Minor misunderstandings of Azure concepts
-   - 1: Fundamentally wrong Azure interpretation
+### 3. Clarity (Appropriate for {target_audience})
+- 5: Crystal clear for target audience, perfect terminology level
+- 4: Clear and understandable with minimal jargon issues
+- 3: Understandable but has some clarity issues
+- 2: Confusing, wrong terminology level, or unexplained concepts
+- 1: Very unclear, inappropriate for audience
 
-6. **Actionability** (Useful next steps)
-   - 5: Specific, actionable steps tied directly to the data
-   - 4: Good recommendations aligned with findings
-   - 3: Generic but relevant recommendations
-   - 2: Vague or partially relevant recommendations
-   - 1: No recommendations or completely irrelevant ones
+### 4. Analysis Depth (Insights Beyond Numbers)
+- 5: Deep insights, patterns, root causes, implications clearly explained
+- 4: Good analysis with meaningful interpretation
+- 3: Basic interpretation, some analysis but mostly descriptive
+- 2: Minimal interpretation, mostly just describing data
+- 1: No analysis, only restates raw numbers
 
-7. **Conciseness** (Efficiency of communication)
-   - 5: Every sentence adds value, perfect length
-   - 4: Mostly efficient with minor redundancy
-   - 3: Some filler or missing details
-   - 2: Too verbose or missing important info
-   - 1: Extremely verbose/repetitive OR missing critical information
+### 5. Context Accuracy (Azure/KQL Knowledge)
+- 5: Expert-level Azure knowledge, perfect terminology and concepts
+- 4: Strong Azure understanding, correct interpretations
+- 3: Basic but correct Azure/KQL understanding
+- 2: Some misunderstandings of Azure concepts
+- 1: Fundamental errors in Azure/KQL interpretation
 
-BE STRICT. A score of 5 should be rare. Average explanations should get 3s.
+### 6. Actionability (Useful Recommendations)
+- 5: Specific, actionable steps directly tied to findings
+- 4: Good relevant recommendations
+- 3: Generic but reasonable recommendations
+- 2: Vague or partially relevant suggestions
+- 1: No actionable recommendations or irrelevant advice
 
-Respond ONLY with a JSON object:
+### 7. Conciseness (Communication Efficiency)
+- 5: Perfectly concise, every sentence adds value
+- 4: Efficient with minimal redundancy
+- 3: Reasonable length, some unnecessary content
+- 2: Too verbose or missing important information
+- 1: Extremely verbose/repetitive OR critically incomplete
+
+Respond ONLY with valid JSON (no markdown):
 {{
     "faithfulness": <score 1-5>,
     "structure": <score 1-5>,
@@ -295,7 +441,8 @@ Respond ONLY with a JSON object:
     "contextAccuracy": <score 1-5>,
     "actionability": <score 1-5>,
     "conciseness": <score 1-5>,
-    "evaluatorNotes": "<specific critique explaining low scores>"
+    "confidence": <1-5, your confidence in this evaluation>,
+    "evaluatorNotes": "<specific observations: what worked well, what needs improvement>"
 }}"""
 
         # Get evaluations from each judge model
@@ -384,20 +531,60 @@ Respond ONLY with a JSON object:
         if not all_judge_scores:
             return jsonify({"error": "All judge models failed"}), 500
 
-        # Average the scores across all judges
+        # Calculate statistics and normalized scores
         dimensions = ["faithfulness", "structure", "clarity", "analysisDepth", "contextAccuracy", "actionability", "conciseness"]
-        averaged_scores = {}
+        
+        # Calculate raw averages and statistics
+        raw_averaged_scores = {}
+        score_statistics = {}
         
         for dim in dimensions:
             dim_scores = [j["scores"].get(dim, 3) for j in all_judge_scores]
-            averaged_scores[dim] = round(sum(dim_scores) / len(dim_scores), 2)
+            raw_averaged_scores[dim] = sum(dim_scores) / len(dim_scores)
+            
+            # Calculate statistics for consensus checking
+            import statistics
+            score_statistics[dim] = {
+                "mean": raw_averaged_scores[dim],
+                "std": statistics.stdev(dim_scores) if len(dim_scores) > 1 else 0,
+                "min": min(dim_scores),
+                "max": max(dim_scores),
+                "range": max(dim_scores) - min(dim_scores)
+            }
         
-        # Combine evaluator notes from all judges
+        # Check for consensus issues (high disagreement)
+        high_disagreement_dims = [
+            dim for dim, stats in score_statistics.items() 
+            if stats["std"] > 1.0 or stats["range"] > 2
+        ]
+        
+        # Normalize scores (optional z-score normalization per judge)
+        normalized_scores = normalize_judge_scores(all_judge_scores, dimensions)
+        
+        # Final averaged scores (using normalized if available, otherwise raw)
+        averaged_scores = {}
+        for dim in dimensions:
+            if normalized_scores:
+                averaged_scores[dim] = round(normalized_scores[dim], 2)
+            else:
+                averaged_scores[dim] = round(raw_averaged_scores[dim], 2)
+        
+        # Add metadata
         averaged_scores["evaluatorNotes"] = "\n\n".join(judge_notes) if judge_notes else "No detailed notes available"
         averaged_scores["judgeCount"] = len(all_judge_scores)
         averaged_scores["judges"] = [j["model"] for j in all_judge_scores]
+        averaged_scores["consensus"] = {
+            "highDisagreement": high_disagreement_dims,
+            "statistics": score_statistics
+        }
         
-        print(f"[MULTI-JUDGE] Final averaged scores from {len(all_judge_scores)} judges: {averaged_scores}")
+        # Calculate average confidence if available
+        confidences = [j["scores"].get("confidence", 3) for j in all_judge_scores]
+        averaged_scores["averageConfidence"] = round(sum(confidences) / len(confidences), 2)
+        
+        print(f"[MULTI-JUDGE] Final scores from {len(all_judge_scores)} judges: {averaged_scores}")
+        if high_disagreement_dims:
+            print(f"[CONSENSUS WARNING] High disagreement on: {high_disagreement_dims}")
 
         return jsonify({"scores": averaged_scores, "individualJudges": all_judge_scores})
 
@@ -607,6 +794,227 @@ KQL_EXAMPLES = {
 def get_examples():
     """Return KQL example queries."""
     return jsonify(KQL_EXAMPLES)
+
+@app.route("/api/audience-weights")
+def get_audience_weights():
+    """Return audience-specific scoring weights."""
+    return jsonify(AUDIENCE_WEIGHTS)
+
+
+@app.route("/api/benchmark/upload-excel", methods=["POST"])
+def upload_excel():
+    """Parse an uploaded Excel file containing KQL queries."""
+    try:
+        from openpyxl import load_workbook
+        from io import BytesIO
+        
+        if 'file' not in request.files:
+            return jsonify({"error": "No file uploaded"}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "No file selected"}), 400
+        
+        if not file.filename.endswith(('.xlsx', '.xls')):
+            return jsonify({"error": "Please upload an Excel file (.xlsx or .xls)"}), 400
+        
+        # Load workbook
+        wb = load_workbook(filename=BytesIO(file.read()))
+        ws = wb.active
+        
+        queries = []
+        headers = [cell.value for cell in ws[1]] if ws[1] else []
+        
+        # Find query column (look for 'query', 'kql', 'queries' in header)
+        query_col = None
+        name_col = None
+        description_col = None
+        
+        for i, header in enumerate(headers):
+            if header:
+                header_lower = str(header).lower()
+                if header_lower in ['query', 'kql', 'queries', 'kql query']:
+                    query_col = i
+                elif header_lower in ['name', 'title', 'query name']:
+                    name_col = i
+                elif header_lower in ['description', 'desc', 'notes']:
+                    description_col = i
+        
+        # If no header found, assume first column is query
+        if query_col is None:
+            query_col = 0
+            # Check if first row looks like a header
+            first_cell = ws.cell(row=1, column=1).value
+            if first_cell and str(first_cell).lower() in ['query', 'kql', 'queries', 'name']:
+                start_row = 2
+            else:
+                start_row = 1
+        else:
+            start_row = 2
+        
+        # Extract queries
+        for row in ws.iter_rows(min_row=start_row, values_only=True):
+            if row[query_col] and str(row[query_col]).strip():
+                query_text = str(row[query_col]).strip()
+                query_name = str(row[name_col]).strip() if name_col is not None and row[name_col] else f"Query {len(queries) + 1}"
+                query_desc = str(row[description_col]).strip() if description_col is not None and row[description_col] else ""
+                
+                queries.append({
+                    "name": query_name,
+                    "query": query_text,
+                    "description": query_desc
+                })
+        
+        if not queries:
+            return jsonify({"error": "No queries found in the Excel file. Make sure queries are in a column labeled 'Query' or 'KQL'."}), 400
+        
+        return jsonify({
+            "success": True,
+            "queries": queries,
+            "count": len(queries)
+        })
+        
+    except Exception as e:
+        return jsonify({"error": f"Failed to parse Excel file: {str(e)}"}), 500
+
+
+@app.route("/api/benchmark/export-excel", methods=["POST"])
+def export_excel():
+    """Export benchmark results to Excel file."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        from openpyxl.utils import get_column_letter
+        from io import BytesIO
+        from flask import send_file
+        
+        data = request.json
+        results = data.get('results', {})
+        queries = data.get('queries', [])
+        
+        wb = Workbook()
+        
+        # Summary Sheet
+        ws_summary = wb.active
+        ws_summary.title = "Summary"
+        
+        # Styles
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        winner_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
+        # Summary headers
+        summary_headers = ["Model", "Weighted Score", "Faithfulness", "Structure", "Clarity", 
+                         "Analysis Depth", "Context Accuracy", "Actionability", "Conciseness"]
+        for col, header in enumerate(summary_headers, 1):
+            cell = ws_summary.cell(row=1, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal='center')
+        
+        # Summary data
+        leaderboard = results.get('leaderboard', [])
+        for row_idx, model_data in enumerate(leaderboard, 2):
+            ws_summary.cell(row=row_idx, column=1, value=model_data.get('model', ''))
+            ws_summary.cell(row=row_idx, column=2, value=round(model_data.get('weightedScore', 0), 2))
+            ws_summary.cell(row=row_idx, column=3, value=round(model_data.get('scores', {}).get('faithfulness', 0), 2))
+            ws_summary.cell(row=row_idx, column=4, value=round(model_data.get('scores', {}).get('structure', 0), 2))
+            ws_summary.cell(row=row_idx, column=5, value=round(model_data.get('scores', {}).get('clarity', 0), 2))
+            ws_summary.cell(row=row_idx, column=6, value=round(model_data.get('scores', {}).get('analysisDepth', 0), 2))
+            ws_summary.cell(row=row_idx, column=7, value=round(model_data.get('scores', {}).get('contextAccuracy', 0), 2))
+            ws_summary.cell(row=row_idx, column=8, value=round(model_data.get('scores', {}).get('actionability', 0), 2))
+            ws_summary.cell(row=row_idx, column=9, value=round(model_data.get('scores', {}).get('conciseness', 0), 2))
+            
+            # Highlight winner
+            if row_idx == 2:
+                for col in range(1, 10):
+                    ws_summary.cell(row=row_idx, column=col).fill = winner_fill
+            
+            for col in range(1, 10):
+                ws_summary.cell(row=row_idx, column=col).border = thin_border
+        
+        # Auto-width columns
+        for col in range(1, 10):
+            ws_summary.column_dimensions[get_column_letter(col)].width = 15
+        
+        # Per-Query Results Sheet
+        ws_queries = wb.create_sheet("Per-Query Results")
+        
+        query_headers = ["Query #", "Query Name", "Model", "Weighted Score", 
+                        "Faithfulness", "Structure", "Clarity", "Analysis Depth", 
+                        "Context Accuracy", "Actionability", "Conciseness"]
+        for col, header in enumerate(query_headers, 1):
+            cell = ws_queries.cell(row=1, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = thin_border
+        
+        row_idx = 2
+        per_query = results.get('perQuery', [])
+        for q_idx, query_result in enumerate(per_query):
+            query_name = queries[q_idx].get('name', f'Query {q_idx + 1}') if q_idx < len(queries) else f'Query {q_idx + 1}'
+            for model, model_result in query_result.get('modelResults', {}).items():
+                scores = model_result.get('scores', {})
+                ws_queries.cell(row=row_idx, column=1, value=q_idx + 1)
+                ws_queries.cell(row=row_idx, column=2, value=query_name)
+                ws_queries.cell(row=row_idx, column=3, value=model)
+                ws_queries.cell(row=row_idx, column=4, value=round(model_result.get('weightedScore', 0), 2))
+                ws_queries.cell(row=row_idx, column=5, value=round(scores.get('faithfulness', 0), 2))
+                ws_queries.cell(row=row_idx, column=6, value=round(scores.get('structure', 0), 2))
+                ws_queries.cell(row=row_idx, column=7, value=round(scores.get('clarity', 0), 2))
+                ws_queries.cell(row=row_idx, column=8, value=round(scores.get('analysisDepth', 0), 2))
+                ws_queries.cell(row=row_idx, column=9, value=round(scores.get('contextAccuracy', 0), 2))
+                ws_queries.cell(row=row_idx, column=10, value=round(scores.get('actionability', 0), 2))
+                ws_queries.cell(row=row_idx, column=11, value=round(scores.get('conciseness', 0), 2))
+                
+                for col in range(1, 12):
+                    ws_queries.cell(row=row_idx, column=col).border = thin_border
+                row_idx += 1
+        
+        # Auto-width
+        for col in range(1, 12):
+            ws_queries.column_dimensions[get_column_letter(col)].width = 15
+        ws_queries.column_dimensions['B'].width = 30
+        
+        # Queries Sheet
+        ws_query_list = wb.create_sheet("Queries")
+        query_list_headers = ["#", "Name", "Query"]
+        for col, header in enumerate(query_list_headers, 1):
+            cell = ws_query_list.cell(row=1, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = thin_border
+        
+        for q_idx, query in enumerate(queries, 2):
+            ws_query_list.cell(row=q_idx, column=1, value=q_idx - 1)
+            ws_query_list.cell(row=q_idx, column=2, value=query.get('name', ''))
+            ws_query_list.cell(row=q_idx, column=3, value=query.get('query', ''))
+        
+        ws_query_list.column_dimensions['A'].width = 5
+        ws_query_list.column_dimensions['B'].width = 30
+        ws_query_list.column_dimensions['C'].width = 80
+        
+        # Save to bytes
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name='benchmark_results.xlsx'
+        )
+        
+    except Exception as e:
+        return jsonify({"error": f"Failed to export Excel: {str(e)}"}), 500
 
 
 if __name__ == "__main__":

@@ -646,11 +646,21 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function toggleWeightsExplanation() {
+    const content = document.getElementById('weights-content');
+    const icon = document.querySelector('.weights-toggle-icon');
+    if (content && icon) {
+        content.classList.toggle('collapsed');
+        icon.classList.toggle('rotated');
+    }
+}
+
 // Make functions available globally for onclick handlers
 window.toggleCategory = toggleCategory;
 window.loadExample = loadExample;window.toggleCollapsible = toggleCollapsible;
 window.removeTestCase = removeTestCase;
 window.selectTestCase = selectTestCase;
+window.toggleWeightsExplanation = toggleWeightsExplanation;
 
 // ==========================================
 // BENCHMARK FUNCTIONALITY
@@ -1197,6 +1207,78 @@ function renderBenchmarkResults() {
     // Sort by weighted total (descending - best first)
     benchmarkResults.sort((a, b) => b.weightedTotal - a.weightedTotal);
 
+    // Check if we have individual judge data to explain normalization
+    const hasIndividualJudges = benchmarkResults.some(r => r.scores.individualJudges && r.scores.individualJudges.length > 0);
+    let normalizationExplanation = '';
+    
+    if (hasIndividualJudges) {
+        // Calculate how much scores dropped on average
+        const firstResult = benchmarkResults[0];
+        if (firstResult.scores.individualJudges && firstResult.scores.individualJudges.length > 0) {
+            const dimensions = ['faithfulness', 'structure', 'clarity', 'analysisDepth', 'contextAccuracy', 'actionability', 'conciseness'];
+            let rawAvg = 0;
+            let normalizedAvg = 0;
+            let count = 0;
+            
+            dimensions.forEach(dim => {
+                // Calculate average raw score from judges
+                const rawScores = firstResult.scores.individualJudges
+                    .map(j => j.scores[dim] || 0)
+                    .filter(s => s > 0);
+                if (rawScores.length > 0) {
+                    rawAvg += rawScores.reduce((a, b) => a + b, 0) / rawScores.length;
+                    normalizedAvg += firstResult.scores[dim] || 0;
+                    count++;
+                }
+            });
+            
+            if (count > 0) {
+                rawAvg /= count;
+                normalizedAvg /= count;
+                const dropPercent = ((rawAvg - normalizedAvg) / rawAvg * 100).toFixed(0);
+                
+                normalizationExplanation = `
+                    <div class="normalization-explanation">
+                        <div class="normalization-header">
+                            <i class="fas fa-info-circle"></i>
+                            <strong>About Score Normalization</strong>
+                        </div>
+                        <div class="normalization-content">
+                            <p><strong>Why are normalized scores lower than raw scores?</strong></p>
+                            <p>Raw judge scores averaged <strong>${rawAvg.toFixed(1)}</strong>, but normalized scores average <strong>${normalizedAvg.toFixed(1)}</strong> (${dropPercent}% lower). This is intentional:</p>
+                            
+                            <div class="bias-explanation">
+                                <div class="bias-item">
+                                    <span class="bias-icon">🎯</span>
+                                    <div class="bias-text">
+                                        <strong>Judge Leniency Bias:</strong> When all judges give scores of 4-5 across the board, it indicates grade inflation. They're not effectively distinguishing between adequate and exceptional work.
+                                    </div>
+                                </div>
+                                <div class="bias-item">
+                                    <span class="bias-icon">⚖️</span>
+                                    <div class="bias-text">
+                                        <strong>Normalization Process:</strong> The system calculates each judge's average scoring tendency and adjusts scores using z-score normalization to create meaningful differentiation.
+                                    </div>
+                                </div>
+                                <div class="bias-item">
+                                    <span class="bias-icon">📊</span>
+                                    <div class="bias-text">
+                                        <strong>Result:</strong> Normalized scores follow a proper distribution where 3.0 = "adequate", 4.0 = "good", and 5.0 = "exceptional" (rare). This allows you to actually compare models meaningfully.
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <p class="normalization-note">
+                                <i class="fas fa-lightbulb"></i>
+                                <strong>Remember:</strong> A normalized score of 3.5 doesn't mean "bad" - it means "solid performance with room for improvement." Focus on <em>relative</em> differences between models, not absolute scores.
+                            </p>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+    }
+
     resultsSection.innerHTML = `
         <div class="section-header">
             <h3><i class="fas fa-trophy"></i> Benchmark Results</h3>
@@ -1210,6 +1292,63 @@ function renderBenchmarkResults() {
             </div>
         </div>
         
+        ${normalizationExplanation}
+        
+        <div class="scoring-weights-explanation">
+            <div class="weights-header" onclick="toggleWeightsExplanation()">
+                <i class="fas fa-balance-scale"></i>
+                <strong>How is the Weighted Total calculated?</strong>
+                <i class="fas fa-chevron-down weights-toggle-icon"></i>
+            </div>
+            <div class="weights-content" id="weights-content">
+                <p>The <strong>Weighted Total</strong> is not a simple average. Each dimension has a different weight based on its importance for evaluating KQL explanations:</p>
+                
+                <div class="weights-table">
+                    <div class="weight-row weight-high">
+                        <span class="weight-dim">Faithfulness</span>
+                        <span class="weight-bar" style="width: 100%"></span>
+                        <span class="weight-value">25%</span>
+                    </div>
+                    <div class="weight-row weight-high">
+                        <span class="weight-dim">Analysis Depth</span>
+                        <span class="weight-bar" style="width: 80%"></span>
+                        <span class="weight-value">20%</span>
+                    </div>
+                    <div class="weight-row weight-medium">
+                        <span class="weight-dim">Clarity</span>
+                        <span class="weight-bar" style="width: 60%"></span>
+                        <span class="weight-value">15%</span>
+                    </div>
+                    <div class="weight-row weight-medium">
+                        <span class="weight-dim">Context Accuracy</span>
+                        <span class="weight-bar" style="width: 60%"></span>
+                        <span class="weight-value">15%</span>
+                    </div>
+                    <div class="weight-row weight-low">
+                        <span class="weight-dim">Structure</span>
+                        <span class="weight-bar" style="width: 40%"></span>
+                        <span class="weight-value">10%</span>
+                    </div>
+                    <div class="weight-row weight-low">
+                        <span class="weight-dim">Actionability</span>
+                        <span class="weight-bar" style="width: 40%"></span>
+                        <span class="weight-value">10%</span>
+                    </div>
+                    <div class="weight-row weight-low">
+                        <span class="weight-dim">Conciseness</span>
+                        <span class="weight-bar" style="width: 20%"></span>
+                        <span class="weight-value">5%</span>
+                    </div>
+                </div>
+                
+                <p class="weights-note">
+                    <i class="fas fa-lightbulb"></i>
+                    <strong>Key insight:</strong> Faithfulness and Analysis Depth together account for <strong>45%</strong> of the total score. 
+                    A model that excels at accurate, in-depth analysis will rank higher even if other scores are slightly lower.
+                </p>
+            </div>
+        </div>
+        
         <div class="benchmark-chart-container">
             <canvas id="benchmark-chart"></canvas>
         </div>
@@ -1220,13 +1359,13 @@ function renderBenchmarkResults() {
                     <tr>
                         <th>Rank</th>
                         <th>Model</th>
-                        <th>Faithfulness</th>
-                        <th>Structure</th>
-                        <th>Clarity</th>
-                        <th>Depth</th>
-                        <th>Context</th>
-                        <th>Actionability</th>
-                        <th>Conciseness</th>
+                        <th title="Weight: 25%">Faithfulness</th>
+                        <th title="Weight: 10%">Structure</th>
+                        <th title="Weight: 15%">Clarity</th>
+                        <th title="Weight: 20%">Depth</th>
+                        <th title="Weight: 15%">Context</th>
+                        <th title="Weight: 10%">Actionability</th>
+                        <th title="Weight: 5%">Conciseness</th>
                         <th>Weighted Total</th>
                     </tr>
                 </thead>
@@ -1249,18 +1388,23 @@ function renderBenchmarkResults() {
             </table>
         </div>
 
-        <h3 style="margin: 30px 0 20px; color: var(--text-primary);"><i class="fas fa-file-alt"></i> Model Explanations (Side by Side)</h3>
+        <h3 style="margin: 30px 0 20px; color: var(--text-primary);">
+            <i class="fas fa-file-alt"></i> Model Explanations (Side by Side)
+            <span style="font-size: 12px; font-weight: normal; color: var(--text-secondary); margin-left: 10px;">
+                <i class="fas fa-info-circle"></i> Scores are normalized across judges to account for bias
+            </span>
+        </h3>
         <div class="explanation-comparisons">
             ${benchmarkResults.map((result, index) => `
                 <div class="explanation-comparison-card">
                     <div class="comparison-card-header">
                         <h4><span class="rank-badge rank-${index + 1}">${index + 1}</span> ${escapeHtml(result.modelName)}</h4>
-                        <span class="comparison-card-score">${result.weightedTotal.toFixed(2)}</span>
+                        <span class="comparison-card-score" title="Normalized weighted score (accounts for judge bias)">${result.weightedTotal.toFixed(2)}</span>
                     </div>
                     <div class="comparison-card-body">
                         ${marked.parse(result.explanation || 'No explanation')}
                     </div>
-                    <div class="comparison-card-scores">
+                    <div class="comparison-card-scores" title="Normalized scores - adjusted to account for judge leniency/harshness">
                         <div class="mini-score">
                             <div class="mini-score-value ${getScoreClass(result.scores.faithfulness)}">${(result.scores.faithfulness || 0).toFixed(1)}</div>
                             <div class="mini-score-label">Faith</div>
@@ -1622,6 +1766,14 @@ function initBulkBenchmark() {
         exportCsvBtn.addEventListener('click', exportBulkToCsv);
     }
     
+    const exportExcelBtn = document.getElementById('export-bulk-excel');
+    if (exportExcelBtn) {
+        exportExcelBtn.addEventListener('click', exportBulkToExcel);
+    }
+    
+    // Initialize Excel upload
+    initExcelUpload();
+    
     // Add initial empty query
     addBulkQuery();
 }
@@ -1667,6 +1819,41 @@ function removeBulkQuery(queryId) {
         bulkQueries = bulkQueries.filter(q => q.id !== queryId);
         updateBulkQueryNumbers();
     }
+}
+
+function renderBulkQueryList() {
+    const container = document.getElementById('bulk-query-list');
+    container.innerHTML = '';
+    
+    bulkQueries.forEach((queryObj, idx) => {
+        const queryId = queryObj.id || `bulk-query-${Date.now()}-${idx}`;
+        queryObj.id = queryId;
+        
+        const queryItem = document.createElement('div');
+        queryItem.className = 'bulk-query-item';
+        queryItem.id = queryId;
+        queryItem.innerHTML = `
+            <div class="bulk-query-header">
+                <span class="bulk-query-number">Query ${idx + 1}${queryObj.name ? `: ${queryObj.name}` : ''}</span>
+                <button class="bulk-query-remove" onclick="removeBulkQuery('${queryId}')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <textarea class="bulk-query-input" placeholder="Enter KQL query...">${queryObj.query || ''}</textarea>
+            <div class="bulk-query-status" id="${queryId}-status"></div>
+        `;
+        
+        container.appendChild(queryItem);
+        
+        // Update query text on input
+        const textarea = queryItem.querySelector('.bulk-query-input');
+        textarea.addEventListener('input', (e) => {
+            const q = bulkQueries.find(q => q.id === queryId);
+            if (q) {
+                q.query = e.target.value;
+            }
+        });
+    });
 }
 
 function updateBulkQueryNumbers() {
@@ -2217,6 +2404,195 @@ function exportBulkToCsv() {
     
     downloadFile(csv, 'bulk-benchmark-results.csv', 'text/csv');
     showToast('Results exported', 'success');
+}
+
+// Excel Upload Functionality
+function initExcelUpload() {
+    const dropzone = document.getElementById('excel-dropzone');
+    const fileInput = document.getElementById('excel-file-input');
+    const uploadResult = document.getElementById('upload-result');
+    const uploadResultText = document.getElementById('upload-result-text');
+    const clearBtn = document.getElementById('clear-uploaded');
+    
+    if (!dropzone || !fileInput) return;
+    
+    // Click to browse
+    dropzone.addEventListener('click', () => fileInput.click());
+    
+    // File selected via input
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleExcelFile(e.target.files[0]);
+        }
+    });
+    
+    // Drag and drop
+    dropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropzone.classList.add('drag-over');
+    });
+    
+    dropzone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('drag-over');
+    });
+    
+    dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('drag-over');
+        
+        if (e.dataTransfer.files.length > 0) {
+            handleExcelFile(e.dataTransfer.files[0]);
+        }
+    });
+    
+    // Clear uploaded
+    if (clearBtn) {
+        clearBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            clearUploadedQueries();
+        });
+    }
+}
+
+async function handleExcelFile(file) {
+    const dropzone = document.getElementById('excel-dropzone');
+    const uploadResult = document.getElementById('upload-result');
+    const uploadResultText = document.getElementById('upload-result-text');
+    
+    if (!file.name.match(/\.(xlsx|xls)$/i)) {
+        showToast('Please upload an Excel file (.xlsx or .xls)', 'error');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    try {
+        dropzone.innerHTML = '<i class="fas fa-spinner fa-spin"></i><p>Uploading and parsing...</p>';
+        
+        const response = await fetch('/api/benchmark/upload-excel', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.error) {
+            throw new Error(data.error);
+        }
+        
+        // Add queries to the list
+        bulkQueries = data.queries.map((q, i) => ({
+            id: Date.now() + i,
+            name: q.name,
+            query: q.query,
+            description: q.description || ''
+        }));
+        
+        renderBulkQueryList();
+        
+        // Show success
+        dropzone.style.display = 'none';
+        uploadResult.style.display = 'flex';
+        uploadResultText.textContent = `Loaded ${data.count} queries from ${file.name}`;
+        
+        showToast(`Successfully loaded ${data.count} queries`, 'success');
+        
+    } catch (error) {
+        showToast(error.message || 'Failed to parse Excel file', 'error');
+        // Reset dropzone
+        dropzone.innerHTML = `
+            <i class="fas fa-file-excel"></i>
+            <p><strong>Drop Excel file here</strong> or click to browse</p>
+            <p class="upload-hint">Excel should have columns: Query (required), Name (optional)</p>
+        `;
+    }
+}
+
+function clearUploadedQueries() {
+    const dropzone = document.getElementById('excel-dropzone');
+    const uploadResult = document.getElementById('upload-result');
+    const fileInput = document.getElementById('excel-file-input');
+    
+    bulkQueries = [];
+    renderBulkQueryList();
+    
+    dropzone.style.display = 'block';
+    dropzone.innerHTML = `
+        <i class="fas fa-file-excel"></i>
+        <p><strong>Drop Excel file here</strong> or click to browse</p>
+        <p class="upload-hint">Excel should have columns: Query (required), Name (optional)</p>
+    `;
+    uploadResult.style.display = 'none';
+    
+    if (fileInput) fileInput.value = '';
+}
+
+async function exportBulkToExcel() {
+    if (!bulkBenchmarkResults) {
+        showToast('No results to export', 'error');
+        return;
+    }
+    
+    try {
+        // Prepare data for export
+        const exportData = {
+            results: {
+                leaderboard: bulkBenchmarkResults.map(r => ({
+                    model: r.modelName,
+                    weightedScore: r.weightedScore,
+                    scores: r.avgScores
+                })),
+                perQuery: bulkBenchmarkResults[0]?.queryResults.map((_, qIdx) => ({
+                    queryIndex: qIdx,
+                    modelResults: {}
+                })) || []
+            },
+            queries: bulkQueries.map(q => ({
+                name: q.name,
+                query: q.query
+            }))
+        };
+        
+        // Build per-query results
+        bulkBenchmarkResults.forEach(modelResult => {
+            modelResult.queryResults.forEach((qr, qIdx) => {
+                if (exportData.results.perQuery[qIdx]) {
+                    exportData.results.perQuery[qIdx].modelResults[modelResult.modelName] = {
+                        weightedScore: calculateWeightedScore(qr.scores || {}),
+                        scores: qr.scores || {}
+                    };
+                }
+            });
+        });
+        
+        const response = await fetch('/api/benchmark/export-excel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(exportData)
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to generate Excel file');
+        }
+        
+        // Download the file
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'benchmark_results.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        
+        showToast('Excel file exported successfully', 'success');
+        
+    } catch (error) {
+        showToast(error.message || 'Failed to export Excel', 'error');
+    }
 }
 
 // Update tab switching to handle bulk benchmark
